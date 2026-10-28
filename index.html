@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#172d36">
+  <meta name="description" content="Demonstração de gestão da manutenção com dados 100% fictícios.">
+  <title>PCM 360º · Demonstração</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="data.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#" aria-label="PCM 360º início">
+      <span class="brand-mark">360</span>
+      <span><strong>PCM 360º</strong><small>OPERAÇÕES · PIAUÍ</small></span>
+    </a>
+    <div class="demo-label"><span></span> AMBIENTE DEMONSTRATIVO</div>
+    <nav aria-label="Navegação principal">
+      <button class="nav-link active" data-page="overview"><span>◫</span> Visão geral</button>
+      <button class="nav-link" data-page="engineering"><span>⌁</span> Engenharia</button>
+      <button class="nav-link" data-page="diagnostics"><span>▦</span> Itens, causas e ações</button>
+      <button class="nav-link" data-page="plans"><span>◷</span> Planos e prazos</button>
+      <button class="nav-link" data-page="orders"><span>≡</span> Ordens de serviço</button>
+      <button class="nav-link" data-page="stops"><span>Ⅱ</span> Paradas</button>
+      <button class="nav-link" data-page="teams"><span>◉</span> Equipes e horas</button>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="demo-card"><strong>Dados fictícios</strong><p>Indicadores e instalações são cenográficos e não representam uma operação real.</p></div>
+      <span class="version">PORTFÓLIO · VERSÃO 1.0</span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <button class="mobile-menu" id="mobileMenu" aria-label="Abrir navegação">☰</button>
+      <div class="crumb"><span>PCM 360º</span><i>/</i><strong id="pageName">Visão geral</strong></div>
+      <div class="top-actions">
+        <span class="period-label">PERÍODO</span>
+        <select id="period" aria-label="Período de análise">
+          <option value="90">Últimos 90 dias</option>
+          <option value="180">Últimos 180 dias</option>
+          <option value="365" selected>Últimos 12 meses</option>
+        </select>
+        <button id="resetFilters" class="button button-quiet">Limpar filtros</button>
+      </div>
+    </header>
+
+    <div class="content">
+      <section class="page-heading">
+        <div>
+          <p class="eyebrow">CENTRO DE INTELIGÊNCIA DA MANUTENÇÃO</p>
+          <h1 id="pageTitle">Visão geral da operação</h1>
+          <p class="subtitle" id="pageDescription">Indicadores integrados de manutenção para uma visão estadual.</p>
+        </div>
+        <div class="heading-meta"><span class="live-dot"></span> Atualizado agora <span class="meta-separator">·</span> Cenário fictício</div>
+      </section>
+
+      <section class="filters card" aria-label="Filtros do painel">
+        <label>Unidade / planta
+          <select id="plantFilter"><option value="">Todas as plantas</option></select>
+        </label>
+        <label>Tipo de ordem
+          <select id="typeFilter"><option value="">Todos os tipos</option></select>
+        </label>
+        <label>Equipe
+          <select id="teamFilter"><option value="">Todas as equipes</option></select>
+        </label>
+        <div class="filter-note"><span class="filter-icon">⌕</span> Os filtros atualizam os indicadores e tabelas desta demonstração.</div>
+      </section>
+
+      <div class="demo-banner"><span>ⓘ</span><p><strong>Projeto de portfólio:</strong> plantas, equipes, ordens, horas e indicadores são inteiramente inventados para demonstração. Não use como dado operacional.</p></div>
+
+      <section class="kpi-grid" id="kpis" aria-label="Indicadores principais"></section>
+
+      <section class="page-view" data-view="overview">
+        <div class="dashboard-grid">
+          <article class="card map-card">
+            <div class="card-heading">
+              <div><p class="eyebrow">COBERTURA ILUSTRATIVA</p><h2>Plantas em foco</h2></div>
+              <span class="tag tag-orange">PIAUÍ · ESQUEMÁTICO</span>
+            </div>
+            <div id="stateMap" class="state-map" aria-label="Diagrama esquemático de plantas fictícias no Piauí"></div>
+            <div class="map-legend"><span><i class="legend-dot green"></i>Dentro da meta</span><span><i class="legend-dot amber"></i>Atenção</span><span><i class="legend-dot red"></i>Crítico</span></div>
+          </article>
+          <article class="card chart-card">
+            <div class="card-heading">
+              <div><p class="eyebrow">TENDÊNCIA DA CARTEIRA</p><h2>Ordens por mês</h2></div>
+              <span class="muted small">Concluídas e abertas</span>
+            </div>
+            <div id="monthlyChart" class="monthly-chart"></div>
+          </article>
+          <article class="card plant-card">
+            <div class="card-heading"><div><p class="eyebrow">ACOMPANHAMENTO</p><h2>Saúde das plantas</h2></div><button class="text-button" data-go="plans">Ver planos →</button></div>
+            <div id="plantHealth" class="plant-health"></div>
+          </article>
+          <article class="card type-card">
+            <div class="card-heading"><div><p class="eyebrow">PERFIL DE MANUTENÇÃO</p><h2>Ordens por tipo</h2></div></div>
+            <div id="typeBreakdown" class="type-breakdown"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="page-view" data-view="engineering" hidden>
+        <div class="section-grid" id="engineeringSummary"></div>
+        <article class="card section-card"><div class="card-heading"><div><p class="eyebrow">CONFIABILIDADE</p><h2>Ativos com mais intervenções</h2></div></div><div id="assetRanking" class="table-wrap"></div></article>
+        <article class="card section-card"><div class="card-heading"><div><p class="eyebrow">ANÁLISE DE RECORRÊNCIA</p><h2>Pontos para avaliação técnica</h2></div></div><div id="recurrenceCards" class="recurrence-grid"></div><p class="small-note">A recorrência é um sinal para investigação, não uma conclusão de causa raiz.</p></article>
+      </section>
+
+      <section class="page-view" data-view="diagnostics" hidden>
+        <div class="section-intro"><p class="eyebrow">DIAGNÓSTICO DE MANUTENÇÃO</p><h2>Itens, causas e ações registradas</h2><p>Ocorrências agrupadas a partir de ordens fictícias concluídas, sem inferir causa raiz.</p></div>
+        <div id="diagnosticGrid" class="diagnostic-grid"></div>
+        <article class="card section-card"><div class="card-heading"><div><p class="eyebrow">EVIDÊNCIAS DA DEMONSTRAÇÃO</p><h2>Ordens relacionadas</h2></div><button class="button button-quiet" data-export="diagnostics">Exportar CSV</button></div><div id="diagnosticTable" class="table-wrap"></div></article>
+      </section>
+
+      <section class="page-view" data-view="plans" hidden>
+        <div class="section-intro"><p class="eyebrow">PREVENTIVA E PREDITIVA</p><h2>Aderência e prazos</h2><p>Acompanhamento ilustrativo das rotinas planejadas por instalação.</p></div>
+        <div class="section-grid" id="planKpis"></div>
+        <article class="card section-card"><div class="card-heading"><div><p class="eyebrow">POR INSTALAÇÃO</p><h2>Execução dos planos</h2></div><button class="button button-quiet" data-export="plans">Exportar CSV</button></div><div id="plansTable" class="table-wrap"></div></article>
+      </section>
+
+      <section class="page-view" data-view="orders" hidden>
+        <div class="section-intro"><p class="eyebrow">CARTEIRA DE MANUTENÇÃO</p><h2>Ordens de serviço</h2><p>Consulte as ordens fictícias conforme o período e os filtros selecionados.</p></div>
+        <article class="card section-card"><div class="card-heading"><div><p class="eyebrow">REGISTROS</p><h2 id="ordersCount">Ordens</h2></div><button class="button button-quiet" data-export="orders">Exportar CSV</button></div><div id="ordersTable" class="table-wrap"></div></article>
+      </section>
+
+      <section class="page-view" data-view="stops" hidden>
+        <div class="section-intro"><p class="eyebrow">CONFIABILIDADE OPERACIONAL</p><h2>Paradas e disponibilidade</h2><p>Indicadores cenográficos calculados a partir de eventos fictícios de indisponibilidade.</p></div>
+        <div class="section-grid" id="stopKpis"></div>
+        <article class="card section-card"><div class="card-heading"><div><p class="eyebrow">HISTÓRICO DE EVENTOS</p><h2>Ocorrências por planta</h2></div></div><div id="stopsTable" class="table-wrap"></div></article>
+        <p class="small-note">Disponibilidade estimada apenas para fins de demonstração. Não representa medição operacional real.</p>
+      </section>
+
+      <section class="page-view" data-view="teams" hidden>
+        <div class="section-intro"><p class="eyebrow">CAPACIDADE E EXECUÇÃO</p><h2>Equipes e horas apontadas</h2><p>Visão agregada por equipe fictícia; não há dados pessoais nem monitoramento individual.</p></div>
+        <div class="section-grid" id="teamKpis"></div>
+        <article class="card section-card"><div class="card-heading"><div><p class="eyebrow">APONTAMENTO AGREGADO</p><h2>Horas e produtividade por equipe</h2></div><button class="button button-quiet" data-export="teams">Exportar CSV</button></div><div id="teamsTable" class="table-wrap"></div></article>
+        <div class="privacy-note"><strong>Indicadores de equipe, não de vigilância.</strong> Este protótipo não captura localização, atividade de tela ou dados pessoais. Horas e produtividade são dados agregados e inventados.</div>
+      </section>
+      <footer><span>PCM 360º</span><span>Protótipo demonstrativo · Dados fictícios · 2026</span></footer>
+    </div>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

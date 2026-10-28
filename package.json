@@ -1,0 +1,9 @@
+{
+  "name": "pcm-360-demo",
+  "version": "1.0.0",
+  "private": false,
+  "description": "Painel demonstrativo de PCM com dados fictícios.",
+  "scripts": {
+    "test": "node --test"
+  }
+}
