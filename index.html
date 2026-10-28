@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#d96827">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>PCM 360º · Inteligência de Manutenção</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script defer src="core.js"></script>
+  <script defer src="data.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <div id="shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <a class="brand-lockup" href="#" aria-label="PCM 360º início"><span class="brand-symbol">360</span><span class="brand-title">PCM 360º</span></a>
+        <span class="sidebar-sub">INTELIGÊNCIA DE MANUTENÇÃO</span>
+      </div>
+      <div class="rail-title">MENU</div>
+      <nav aria-label="Navegação principal">
+        <button data-page="overview" class="active"><span>◉</span> Visão geral</button>
+        <button data-page="intelligence"><span>↗</span> Engenharia</button>
+        <button data-page="icm"><span>▥</span> Itens e causas</button>
+        <button data-page="deadlines"><span>◷</span> Planos</button>
+        <button data-page="orders"><span>≡</span> Ordens</button>
+        <button data-page="stops"><span>Ⅱ</span> Paradas</button>
+        <button data-page="hours"><span>◴</span> Horas e equipes</button>
+      </nav>
+      <div class="rail-bottom">
+        <button id="rulesBtn">Critérios e metodologia ↗</button>
+        <span class="demo-badge">DEMONSTRAÇÃO · DADOS FICTÍCIOS</span>
+      </div>
+    </aside>
+
+    <main>
+      <header>
+        <div class="header-title-wrap">
+          <div>
+            <span class="eyebrow blue">PLANEJAMENTO E CONTROLE DA MANUTENÇÃO</span>
+            <h1 id="pageTitle">Visão dos sistemas</h1>
+            <p>Ordens, planos, ativos e confiabilidade operacional</p>
+          </div>
+        </div>
+        <div class="header-actions">
+          <div class="period-presets" aria-label="Atalhos de período">
+            <button type="button" class="preset-btn" data-preset="month" title="Mês atual">Mês</button>
+            <button type="button" class="preset-btn" data-preset="90d" title="Últimos 90 dias">90 dias</button>
+            <button type="button" class="preset-btn active" data-preset="year" title="Ano atual">Ano</button>
+            <button type="button" class="preset-btn" data-preset="all" title="Todo o histórico da base">Histórico</button>
+          </div>
+          <button id="refreshBtn">↻ Recarregar demonstração</button>
+        </div>
+      </header>
+
+      <section class="filters" aria-label="Filtros por data de entrada e carteira">
+        <div class="filters-heading">
+          <div><strong>Filtros</strong><span>Refine os indicadores e as ordens exibidas</span></div>
+          <span id="activeFilterCount" class="active-filter-count" aria-live="polite"></span>
+        </div>
+        <label>Entrada a partir de
+          <input type="date" id="from">
+        </label>
+        <label>Entrada até
+          <input type="date" id="to">
+        </label>
+        <div class="filter-picker" data-filter-key="tag">
+          <span class="filter-label">Instalação</span>
+          <details id="systemPicker">
+            <summary id="systemSummary">Todos os sistemas</summary>
+            <div id="systemOptions" class="filter-options" role="group" aria-label="Instalações"></div>
+          </details>
+        </div>
+        <div class="filter-picker" data-filter-key="asset">
+          <span class="filter-label">Ativo</span>
+          <details id="assetPicker">
+            <summary id="assetSummary">Todos os ativos</summary>
+            <div id="assetOptions" class="filter-options" role="group" aria-label="Ativos"></div>
+          </details>
+        </div>
+        <div class="filter-picker" data-filter-key="type">
+          <span class="filter-label">Tipo de ordem</span>
+          <details id="typePicker">
+            <summary id="typeSummary">Todos os tipos</summary>
+            <div id="typeOptions" class="filter-options" role="group" aria-label="Tipos de ordem"></div>
+          </details>
+        </div>
+        <div class="filter-picker" data-filter-key="priority">
+          <span class="filter-label">Prioridade</span>
+          <details id="priorityPicker">
+            <summary id="prioritySummary">Todas as prioridades</summary>
+            <div id="priorityOptions" class="filter-options" role="group" aria-label="Prioridades"></div>
+          </details>
+        </div>
+        <button id="clearFilters" class="clear-filters" title="Limpar filtros">Limpar filtros</button>
+      </section>
+      <p class="filter-date-help">O período é aplicado conforme cada análise: data de entrada da ordem, referência do plano, data da nota ou início da avaria.</p>
+      <div id="activeFilters" class="active-filters" hidden>
+        <span>Aplicados</span>
+        <div id="activeFilterChips"></div>
+      </div>
+
+      <div class="statusline">
+        <span id="loadStatus">Carregando informações…</span>
+        <span id="scope"></span>
+      </div>
+
+      <section id="empty" class="empty" hidden>
+        <span class="empty-icon">↥</span>
+        <h2>Sua operação começa pelos dados.</h2>
+        <p>Importe os arquivos de sistemas, ordens, itens, medidas e notas de parada. Os indicadores, diagnósticos de confiabilidade e o mapa serão calculados a partir das suas planilhas.</p>
+      </section>
+
+      <div id="dashboard">
+        <section id="kpis" class="kpis"></section>
+
+        <!-- 1. VISÃO DOS SISTEMAS -->
+                <section data-view="overview">
+          <div class="section-intro" style="padding-bottom:14px">
+            <div>
+              <span class="eyebrow blue">VISÃO EXECUTIVA</span>
+              <h2>Panorama dos sistemas e da carteira.</h2>
+              <p>Resumo das ordens, execução, aderência e ativos no recorte selecionado.</p>
+            </div>
+            <div class="section-actions">
+              <button id="printOverviewBtn">▣ Gerar PDF da visão</button>
+            </div>
+          </div>
+          <div class="map-layout">
+            <article class="card map-card" id="mapCard">
+              <div class="card-top">
+                <div>
+                  <span class="eyebrow">VISÃO TERRITORIAL · GEORREFERENCIAMENTO</span>
+                  <h2>Onde a manutenção acontece</h2>
+                </div>
+                <div class="card-actions">
+                  <button id="fitMap" title="Enquadrar todos os pontos visíveis">Enquadrar pontos ↗</button>
+                  <button id="fullscreenMap" title="Alternar mapa expandido">Expandir ⤢</button>
+                </div>
+              </div>
+              <div id="map"></div>
+              <div class="map-note">
+                <div class="map-legend">
+                  <span><i class="dot good-dot"></i> Aderência ≥ 85%</span>
+                  <span><i class="dot warn-dot"></i> 60% a 84%</span>
+                  <span><i class="dot critical-dot"></i> &lt; 60% ou vencida</span>
+                  <span><i class="dot blue-dot"></i> Sem plano no período</span>
+                </div>
+                <span>Passe o mouse para consultar • Clique para detalhar</span>
+              </div>
+              <p id="mapWarning" class="small-note" hidden>O mapa de fundo não carregou. Os pontos mantêm as coordenadas informadas nas planilhas.</p>
+            </article>
+
+            <article class="card systems-card">
+              <div class="card-top">
+                <div>
+                  <span class="eyebrow">UNIDADES OPERACIONAIS</span>
+                  <h2>Sistemas em foco</h2>
+                </div>
+                <span id="systemCount" class="count"></span>
+              </div>
+              <div class="systems-toolbar">
+                <input id="systemSearch" type="search" placeholder="Filtrar instalação, TAG ou bairro…" aria-label="Filtrar instalação">
+              </div>
+              <div id="systemsList"></div>
+            </article>
+          </div>
+
+          <div class="overview-bottom">
+            <article class="card">
+              <div class="card-top">
+                <div>
+                  <span class="eyebrow">EVOLUÇÃO DA EXECUÇÃO</span>
+                  <h2>Ordens por mês</h2>
+                </div>
+                <span class="small-note">Volume total (claro) × Executadas (azul mar)</span>
+              </div>
+              <div id="monthly"></div>
+            </article>
+
+            <article class="card plan-card">
+              <span class="eyebrow">DISCIPLINA DO PLANO PREVENTIVO &amp; PREDITIVO</span>
+              <div id="planSummary"></div>
+              <p>Ordens do plano com referência no período. A execução dentro do período considera a data de início real.</p>
+              <div class="plan-card-actions">
+                <button data-go="deadlines">Ver planos e prazos ↗</button>
+                <button data-go="intelligence">Ver engenharia ↗</button>
+              </div>
+            </article>
+          </div>
+
+          <div class="overview-extra">
+            <article class="card">
+              <div class="card-top">
+                <div>
+                  <span class="eyebrow">PERFIL OPERACIONAL SAP</span>
+                  <h2>Distribuição por classe de ordem</h2>
+                </div>
+                <span class="small-note">Clique em uma classe para filtrar o painel</span>
+              </div>
+              <div id="typeDistribution"></div>
+            </article>
+
+            <article class="card">
+              <div class="card-top">
+                <div>
+                  <span class="eyebrow">CONFIABILIDADE DE ATIVOS</span>
+                  <h2>Ativos com maior volume de intervenções</h2>
+                </div>
+                <span class="small-note">Clique para inspecionar ordens do ativo</span>
+              </div>
+              <div id="topAssetsOverview"></div>
+            </article>
+          </div>
+
+        </section>
+
+        <!-- 2. ENGENHARIA -->
+        <section data-view="intelligence" hidden>
+          <div class="section-intro">
+            <div>
+              <span class="eyebrow blue">ANÁLISE DA MANUTENÇÃO</span>
+              <h2>Indicadores e recorrências.</h2>
+              <p>Distribuição das ordens, ativos com mais corretivas e registros repetidos no período.</p>
+            </div>
+            <div class="section-actions">
+              <button id="exportBadActorsBtn">↓ Exportar Bad Actors &amp; MTBF (CSV)</button>
+            </div>
+          </div>
+
+          <div id="engKpis" class="kpis"></div>
+
+          <article class="card mix-card">
+            <div class="card-top">
+              <div>
+                <span class="eyebrow">DISTRIBUIÇÃO DA CARTEIRA</span>
+                <h2>Ordens por tipo de manutenção</h2>
+              </div>
+              <span class="small-note">Cada tipo mostra sua participação no total e a quantidade de ordens no período e filtros selecionados.</span>
+            </div>
+            <div id="maintenanceMixBar" class="mix-body"></div>
+          </article>
+
+          <div class="section-intro" style="margin-top:26px;padding-bottom:14px">
+            <div>
+              <span class="eyebrow blue">PONTOS DE ATENÇÃO</span>
+              <h2>Ocorrências para avaliar</h2>
+              <p>Ocorrências identificadas nos registros do período. Avalie-as com a equipe de manutenção.</p>
+            </div>
+          </div>
+          <div id="decisionCards" class="decision-grid"></div>
+
+          <article class="card" style="margin-top:22px">
+            <div class="card-top">
+              <div>
+                <span class="eyebrow">RECORRÊNCIA DE FALHAS</span>
+                <h2>Ativos com mais intervenções corretivas</h2>
+              </div>
+              <span class="small-note">Ordenados pelo volume de ordens corretivas no período.</span>
+            </div>
+            <div id="badActorsTable" class="table-wrap"></div>
+          </article>
+        </section>
+
+        <!-- 3. ITENS, CAUSAS E MEDIDAS (ICM) -->
+        <section data-view="icm" hidden>
+          <div class="section-intro">
+            <div>
+              <span class="eyebrow blue">ICM · ITENS, CAUSAS E MEDIDAS</span>
+              <h2>Entenda o que mais se repete.</h2>
+              <p>Contagem de ordens executadas distintas por registro. Clique nas barras ou linhas para consultar as evidências.</p>
+            </div>
+            <div class="section-actions">
+              <button id="exportIcmBtn">↓ Exportar Matriz ICM (CSV)</button>
+            </div>
+          </div>
+
+          <div id="icmCards" class="icm-grid"></div>
+          <p class="small-note">Causas representam os registros das ordens. A confirmação de causa raiz exige investigação técnica (RCA).</p>
+
+          <div class="overview-extra">
+            <article class="card">
+              <div class="card-top">
+                <div>
+                  <span class="eyebrow">DIAGNÓSTICO CRUZADO DE MODOS DE FALHA</span>
+                  <h2>Matriz Item × Problema × Causa × Medida</h2>
+                </div>
+                <span class="small-note">Combinações mais recorrentes em ordens executadas</span>
+              </div>
+              <div id="icmMatrixTable" class="table-wrap"></div>
+            </article>
+
+            <article class="card">
+              <div class="card-top">
+                <div>
+                  <span class="eyebrow">RECORRÊNCIA POR EQUIPAMENTO</span>
+                  <h2>Top ativos com mais intervenções no período</h2>
+                </div>
+                <span class="small-note">Ordenado por ordens executadas</span>
+              </div>
+              <div id="topAssetsIcm"></div>
+            </article>
+          </div>
+        </section>
+
+        <!-- 4. PLANOS E PRAZOS -->
+        <section data-view="deadlines" hidden>
+          <div class="section-intro">
+            <div>
+              <span class="eyebrow blue">DISCIPLINA DE EXECUÇÃO</span>
+              <h2>Planos, entregas e prazos.</h2>
+              <p>O plano usa a data de referência para definir as ordens previstas no intervalo.</p>
+            </div>
+            <div class="section-actions">
+              <button id="exportDeadlinesBtn">↓ Exportar Aderência (CSV)</button>
+            </div>
+          </div>
+
+          <div id="deadlineCards" class="kpis"></div>
+
+          <article class="card">
+            <div class="card-top">
+              <div>
+                <span class="eyebrow">DESEMPENHO POR UNIDADE</span>
+                <h2>Ranking de aderência preventiva</h2>
+              </div>
+              <span class="small-note">Menor para maior · executadas ÷ ordens existentes no plano</span>
+            </div>
+            <div id="planTable" class="table-wrap"></div>
+          </article>
+
+          <div class="overview-bottom">
+            <article class="card">
+              <div class="card-top">
+                <div>
+                  <span class="eyebrow">ANÁLISE TEMPORAL</span>
+                  <h2>Início real × referência e carteira do plano</h2>
+                </div>
+              </div>
+              <div id="comparison"></div>
+              <p class="small-note inset">Comparação descritiva. A referência pode ser alterada no processo de encerramento e não comprova cumprimento do prazo.</p>
+            </article>
+
+            <article class="card explanation">
+              <span class="eyebrow blue">CRITÉRIO DE PRAZO</span>
+              <h2>Uma comparação verificável.</h2>
+              <p>Uma ordem executada está no prazo quando sua conclusão real é anterior ou igual ao prazo programado.</p>
+              <p>Sem essas duas datas, a situação fica como <strong>não avaliável</strong>. O início real não substitui a conclusão.</p>
+              <p>Na importação, os campos opcionais são <b>Prazo programado</b> e <b>Conclusão real</b>.</p>
+            </article>
+          </div>
+        </section>
+
+        <!-- 5. PARADAS -->
+        <section data-view="stops" hidden>
+          <div class="section-intro">
+            <div>
+              <span class="eyebrow blue">PARADAS · CONFIABILIDADE OPERACIONAL</span>
+              <h2>Onde as paradas se concentram.</h2>
+              <p>Leitura por ano, planta, ativo e motivo usando a data de entrada da ordem.</p>
+            </div>
+            <div class="section-actions">
+              <button id="exportStopsBtn">↓ Exportar paradas (CSV)</button>
+              <button id="printStopsBtn">▣ Gerar relatório PDF</button>
+            </div>
+          </div>
+
+          <div id="stopKpis" class="kpis"></div>
+
+          <article class="card" style="margin-bottom:20px">
+            <div class="card-top">
+              <div>
+                <span class="eyebrow">FONTE: PLANILHA DE NOTAS</span>
+                <h2>Ordens com flag de parada</h2>
+              </div>
+              <button id="exportFlaggedStopsBtn">↓ Exportar ordens com flag (CSV)</button>
+            </div>
+            <div id="flaggedStopSummary" class="kpis"></div>
+            <div id="flaggedStops" class="table-wrap"></div>
+          </article>
+
+          <article class="card" style="margin-bottom:20px">
+            <div class="card-top">
+              <div>
+                <span class="eyebrow">CONFIABILIDADE POR PLANTA</span>
+                <h2>Disponibilidade estimada por planta</h2>
+                <p>Ranking da menor para a maior disponibilidade; plantas sem cálculo ficam ao final.</p>
+              </div>
+            </div>
+            <div id="reliabilitySummary" class="kpis"></div>
+            <div id="reliabilityTable" class="table-wrap"></div>
+          </article>
+
+          <article class="card" style="margin-bottom:20px">
+            <div class="card-top">
+              <div>
+                <span class="eyebrow">CONFIABILIDADE POR ATIVO</span>
+                <h2>Disponibilidade estimada por ativo</h2>
+                <p>Ranking da menor para a maior disponibilidade; ativos sem cálculo ficam ao final.</p>
+              </div>
+            </div>
+            <div id="assetReliabilitySummary" class="kpis"></div>
+            <div id="assetReliabilityTable" class="table-wrap"></div>
+          </article>
+
+          <div class="overview-bottom">
+            <article class="card">
+              <div class="card-top">
+                <div>
+                  <span class="eyebrow">MOTIVOS IDENTIFICADOS</span>
+                  <h2>Por que a parada foi registrada?</h2>
+                </div>
+                <span class="small-note">Ordens distintas</span>
+              </div>
+              <div id="stopReasons"></div>
+            </article>
+
+            <article class="card">
+              <div class="card-top">
+                <div>
+                  <span class="eyebrow">EVOLUÇÃO ANUAL</span>
+                  <h2>Paradas por ano</h2>
+                </div>
+                <span class="small-note">Data de entrada</span>
+              </div>
+              <div id="stopYears" class="table-wrap"></div>
+            </article>
+          </div>
+
+          <div class="overview-extra">
+            <article class="card">
+              <div class="card-top">
+                <div>
+                  <span class="eyebrow">PARETO DE ATIVOS</span>
+                  <h2>Ativos com mais paradas</h2>
+                </div>
+                <span class="small-note">Ordens distintas</span>
+              </div>
+              <div id="stopAssets"></div>
+            </article>
+            <article class="card explanation">
+              <span class="eyebrow blue">QUALIDADE DO DADO</span>
+              <h2>Identificada × confirmada.</h2>
+              <p>Uma ocorrência é <strong>identificada</strong> quando o texto, problema ou causa aponta uma parada.</p>
+              <p>Ela passa a <strong>confirmada</strong> quando a planilha informa confirmação ou início e fim da parada.</p>
+            </article>
+          </div>
+
+          <article class="card" style="margin-top:20px">
+            <div class="card-top">
+              <div>
+                <span class="eyebrow">PLANTA · ATIVO · MOTIVO</span>
+                <h2>Detalhamento das paradas</h2>
+              </div>
+              <span class="small-note">Clique na quantidade para ver as ordens</span>
+            </div>
+            <div id="stopGroups" class="table-wrap"></div>
+          </article>
+
+          <p class="small-note" style="margin-top:12px">Critério aplicado: a ordem entra quando o texto, problema ou causa indica parada, desligamento, falha ou indisponibilidade. Campos opcionais de confirmação, início, fim, motivo e impacto são usados quando existirem. A duração só aparece para paradas com início e fim preenchidos.</p>
+        </section>
+
+        <!-- 6. ORDENS DE MANUTENÇÃO -->
+        <section data-view="orders" hidden>
+          <article class="card">
+            <div class="card-top">
+              <div>
+                <span class="eyebrow">RASTREABILIDADE</span>
+                <h2>Ordens de manutenção</h2>
+              </div>
+              <button id="exportBtn">↓ Exportar CSV</button>
+            </div>
+            <div class="table-filters">
+              <input id="search" placeholder="Buscar ordem, descrição, instalação ou ativo…" aria-label="Buscar ordens">
+              <select id="statusFilter" aria-label="Situação">
+                <option value="">Todas as situações</option>
+                <option value="done">Ordens executadas</option>
+                <option value="open">Em aberto</option>
+                <option value="notdone">Não executadas</option>
+                <option value="closed">Encerradas administrativamente</option>
+                <option value="other">Outras situações</option>
+              </select>
+              <select id="planFilter" aria-label="Vínculo com plano">
+                <option value="">Todas (com e sem plano)</option>
+                <option value="planned">Somente do plano</option>
+                <option value="unplanned">Sem plano vinculado</option>
+              </select>
+            </div>
+            <div id="ordersTable" class="table-wrap"></div>
+            <div class="pagination">
+              <button id="prevPage">← Anterior</button>
+              <span id="pageInfo"></span>
+              <button id="nextPage">Próxima →</button>
+            </div>
+          </article>
+        </section>
+
+        <section data-view="hours" hidden>
+          <div class="section-intro">
+            <div>
+              <span class="eyebrow blue">CAPACIDADE E EXECUÇÃO · DEMONSTRAÇÃO</span>
+              <h2>Horas apontadas por equipe.</h2>
+              <p>Resumo agregado das horas das ordens fictícias. Não há dados individuais de colaboradores.</p>
+            </div>
+            <div class="section-actions"><button id="exportHoursBtn">↓ Exportar resumo (CSV)</button></div>
+          </div>
+          <div id="hoursKpis" class="kpis"></div>
+          <article class="card">
+            <div class="card-top">
+              <div><span class="eyebrow">VISÃO AGREGADA</span><h2>Esforço e execução por equipe</h2></div>
+              <span class="small-note">Produtividade expressa como ordens concluídas por 100 horas apontadas.</span>
+            </div>
+            <div id="hoursTable" class="table-wrap"></div>
+          </article>
+          <p class="small-note" style="margin-top:12px">O indicador não é uma avaliação individual e não deve ser interpretado isoladamente como medida de desempenho.</p>
+        </section>
+      </div>
+
+      <footer>
+        <div class="footer-brand">
+          <strong>PCM 360º</strong>
+          <span>Planejamento, Controle e Engenharia da Manutenção · Demonstração fictícia</span>
+        </div>
+        <span id="footerDate"></span>
+      </footer>
+    </main>
+  </div>
+
+  <dialog id="detail">
+    <div class="modal-top">
+      <span class="eyebrow blue" id="modalEyebrow">DETALHAMENTO</span>
+      <button id="closeDetail" aria-label="Fechar">✕</button>
+    </div>
+    <div id="detailBody"></div>
+  </dialog>
+
+  <div id="toast" role="status" hidden></div>
+</body>
+</html>
