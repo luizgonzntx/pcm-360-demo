@@ -1,349 +1,1268 @@
 (() => {
   'use strict';
-  const { plants, teams, orders } = window.PCM360;
-  const $ = selector => document.querySelector(selector);
-  const $$ = selector => [...document.querySelectorAll(selector)];
-  const labels = {
-    overview: ['Visão geral', 'Visão geral da operação', 'Indicadores integrados de manutenção para uma visão estadual.'],
-    engineering: ['Engenharia', 'Engenharia e confiabilidade', 'Recorrências, ativos críticos e sinais para análise técnica.'],
-    diagnostics: ['Itens, causas e ações', 'Diagnóstico da manutenção', 'Explore os registros associados às ordens concluídas.'],
-    plans: ['Planos e prazos', 'Planos e prazos', 'Aderência ilustrativa das rotinas preventivas e preditivas.'],
-    orders: ['Ordens de serviço', 'Ordens de serviço', 'Carteira fictícia de manutenção por unidade e equipe.'],
-    stops: ['Paradas', 'Paradas e disponibilidade', 'Histórico ilustrativo de eventos de indisponibilidade.'],
-    teams: ['Equipes e horas', 'Equipes e horas apontadas', 'Capacidade e execução agregadas por equipe fictícia.']
+  const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)], P = window.PCM;
+  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const num = v => Number(v || 0).toLocaleString('pt-BR'), pct = v => v == null ? '—' : (v * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%', fmt = v => P.validDate(v || '') ? v.split('-').reverse().join('/') : 'Não informada';
+  const today = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+
+  let data = null, page = 'overview', pageNo = 1, toastTimer, map, markers, fitBounds, rows = [], rankEvidence = [], modalMode = '', loading = false;
+  // O recorte operacional sempre usa a data de entrada da ordem.
+  const f = { from: today().slice(0, 4) + '-01-01', to: today().slice(0, 4) + '-12-31', dateField: 'created', tag: [], asset: [], type: [], priority: [] };
+  const emptyHTML = '<div class="no-data">Sem registros para os filtros selecionados.</div>';
+
+  const filterLabels = {
+    tag: { options: '#systemOptions', summary: '#systemSummary', all: 'Todos os sistemas', title: 'Instalação' },
+    asset: { options: '#assetOptions', summary: '#assetSummary', all: 'Todos os ativos', title: 'Ativo' },
+    type: { options: '#typeOptions', summary: '#typeSummary', all: 'Todos os tipos', title: 'Tipo' },
+    priority: { options: '#priorityOptions', summary: '#prioritySummary', all: 'Todas as prioridades', title: 'Prioridade' }
   };
-  const monthNames = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
-  const selected = { page: 'overview', plant: '', type: '', team: '', days: 365 };
-  const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-  const formatNumber = value => Number(value || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
-  const formatDate = value => value ? new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC' }).format(new Date(value + 'T12:00:00Z')) : '—';
-  const percent = value => (value * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%';
-  const now = new Date('2026-10-28T12:00:00Z');
 
-  function filteredOrders() {
-    const cutoff = new Date(now);
-    cutoff.setUTCDate(cutoff.getUTCDate() - selected.days);
-    const cutoffText = cutoff.toISOString().slice(0, 10);
-    return orders.filter(order =>
-      order.opened >= cutoffText &&
-      (!selected.plant || order.plantId === selected.plant) &&
-      (!selected.type || order.type === selected.type) &&
-      (!selected.team || order.teamId === selected.team)
-    );
+  function selectedValues(key) {
+    const value = f[key];
+    return Array.isArray(value) ? value : (value ? [value] : []);
   }
 
-  function statusClass(adherence) {
-    return adherence >= 0.85 ? 'good' : adherence >= 0.6 ? 'warn' : 'bad';
+  function matchesFilter(value, selected) {
+    const list = Array.isArray(selected) ? selected : (selected ? [selected] : []);
+    return !list.length || list.includes(value);
   }
 
-  function statusLabel(adherence) {
-    return adherence >= 0.85 ? 'Dentro da meta' : adherence >= 0.6 ? 'Atenção' : 'Crítico';
+  function filterSummary(key, values) {
+    const cfg = filterLabels[key], count = values.length;
+    if (!count) return cfg.all;
+    if (count === document.querySelectorAll(cfg.options + ' .filter-check').length) return cfg.all;
+    if (count === 1) {
+      const input = [...document.querySelectorAll(cfg.options + ' input')].find(item => item.value === values[0]);
+      return input?.dataset.label || values[0];
+    }
+    return count + ' selecionados';
   }
 
-  function kpi(label, value, note, icon, color = 'orange') {
-    const palettes = {
-      orange: ['#fff0e5', '#bd4f16'],
-      green: ['#e9f5ee', '#378461'],
-      amber: ['#fff4e2', '#ad791c'],
-      teal: ['#e8f4f2', '#167a70']
+  function renderFilterPicker(key, list) {
+    const cfg = filterLabels[key], el = $(cfg.options);
+    if (!el) return;
+    const selected = selectedValues(key);
+    el.innerHTML = list.length
+      ? '<div class="filter-options-tools">' +
+        '<input type="search" class="filter-search" data-filter-search="' + key + '" placeholder="Buscar ' + cfg.title.toLocaleLowerCase('pt-BR') + '…" aria-label="Buscar ' + cfg.title.toLocaleLowerCase('pt-BR') + '">' +
+        '<div><button type="button" data-filter-action="all" data-filter-key="' + key + '">Marcar todos</button>' +
+        '<button type="button" data-filter-action="clear" data-filter-key="' + key + '">Limpar</button></div>' +
+        '</div><div class="filter-options-list">' +
+        list.map(([value, label]) => '<label class="filter-option" data-filter-label="' + esc(label.toLocaleLowerCase('pt-BR')) + '"><input type="checkbox" class="filter-check" data-filter-key="' + key + '" value="' + esc(value) + '" data-label="' + esc(label) + '"' + (selected.includes(value) ? ' checked' : '') + '><span>' + esc(label) + '</span></label>').join('') +
+        '</div>'
+      : '<span class="filter-empty">Nenhuma opção disponível</span>';
+    $(cfg.summary).textContent = filterSummary(key, selected);
+  }
+
+  function refreshFilterSummary(key) {
+    const cfg = filterLabels[key];
+    if ($(cfg.summary)) $(cfg.summary).textContent = filterSummary(key, selectedValues(key));
+  }
+
+  function toggleFilterValue(key, value) {
+    const selected = new Set(selectedValues(key));
+    if (selected.has(value)) selected.delete(value); else selected.add(value);
+    f[key] = [...selected];
+    refreshFilterSummary(key);
+  }
+
+  function updateActiveFilters() {
+    const year = today().slice(0, 4);
+    const active = [];
+    if (f.from !== year + '-01-01' || f.to !== year + '-12-31') {
+      active.push({ key: 'period', label: 'Período: ' + fmt(f.from) + ' – ' + fmt(f.to) });
+    }
+    for (const key of ['tag', 'asset', 'type', 'priority']) {
+      const cfg = filterLabels[key];
+      const values = selectedValues(key);
+      if (values.length && values.length === document.querySelectorAll(cfg.options + ' .filter-check').length) continue;
+      for (const value of values) {
+        const option = [...document.querySelectorAll(cfg.options + ' input')].find(input => input.value === value);
+        const label = option?.dataset.label || (key === 'type' ? P.typeLabel(value) : value);
+        active.push({ key, value, label: cfg.title + ': ' + label });
+      }
+    }
+
+    $('#activeFilterCount').textContent = active.length ? active.length + (active.length === 1 ? ' filtro ativo' : ' filtros ativos') : 'Nenhum filtro adicional';
+    $('#clearFilters').disabled = active.length === 0;
+    $('#activeFilters').hidden = active.length === 0;
+    $('#activeFilterChips').innerHTML = active.map(item =>
+      '<button type="button" class="active-filter-chip" data-remove-filter="' + item.key + '"' +
+      (item.value != null ? ' data-filter-value="' + esc(item.value) + '"' : '') +
+      '>' + esc(item.label) + '<span aria-hidden="true">×</span></button>'
+    ).join('');
+  }
+
+  function notify(message) {
+    $('#toast').textContent = message;
+    $('#toast').hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => $('#toast').hidden = true, 6000);
+  }
+
+  function errorText(e) {
+    return e?.message || 'Não foi possível concluir. Tente novamente.';
+  }
+
+  function setPage(next) {
+    page = next;
+    const titles = {
+      overview: 'Visão dos sistemas',
+      intelligence: 'Engenharia & Decisão',
+      icm: 'Itens, causas e medidas',
+      deadlines: 'Planos e prazos',
+      orders: 'Ordens de manutenção',
+      stops: 'Paradas',
+      hours: 'Horas e equipes'
     };
-    const [bg, accent] = palettes[color];
-    return `<article class="kpi" data-icon="${esc(icon)}" style="--kpi-bg:${bg};--kpi-color:${accent}"><div class="kpi-label">${esc(label)}</div><div class="kpi-value">${esc(value)}</div><div class="kpi-note">${esc(note)}</div></article>`;
+    $('#pageTitle').textContent = titles[next] || 'Visão dos sistemas';
+    $$('[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === next));
+    $$('[data-view]').forEach(v => v.hidden = v.dataset.view !== next);
+    if (next === 'overview' && map) setTimeout(() => map.invalidateSize(), 60);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  function renderHeader() {
-    const [short, title, description] = labels[selected.page];
-    $('#pageName').textContent = short;
-    $('#pageTitle').textContent = title;
-    $('#pageDescription').textContent = description;
-    $('#pageDescription').textContent = description;
-    $$('[data-page]').forEach(button => button.classList.toggle('active', button.dataset.page === selected.page));
-    $$('[data-view]').forEach(view => { view.hidden = view.dataset.view !== selected.page; });
+  function selectOptions(id, values, label, selected) {
+    const el = $(id);
+    if (!el) return '';
+    el.innerHTML = '<option value="">' + esc(label) + '</option>' + values.map(([v, n]) => '<option value="' + esc(v) + '">' + esc(n) + '</option>').join('');
+    el.value = selected || '';
+    return el.value;
   }
 
-  function renderKpis(rows) {
-    const completed = rows.filter(order => order.status === 'Concluída').length;
-    const laborHours = rows.reduce((sum, order) => sum + order.hours, 0);
-    const adherencePlants = plants.filter(plant => !selected.plant || plant.id === selected.plant);
-    const planned = adherencePlants.reduce((sum, plant) => sum + plant.plan, 0);
-    const done = adherencePlants.reduce((sum, plant) => sum + plant.done, 0);
-    const adherence = planned ? done / planned : 0;
-    const insideTarget = adherencePlants.filter(plant => plant.adherence >= 0.85).length;
-    $('#kpis').innerHTML = [
-      kpi('Ordens no período', formatNumber(rows.length), `${completed} concluídas no recorte`, '≡', 'orange'),
-      kpi('Aderência aos planos', percent(adherence), 'Ordens preventivas e preditivas', '◷', statusClass(adherence) === 'good' ? 'green' : 'amber'),
-      kpi('Plantas dentro da meta', `${insideTarget}/${adherencePlants.length}`, 'Meta de aderência igual ou acima de 85%', '⌖', 'teal'),
-      kpi('Horas apontadas', formatNumber(laborHours) + ' h', `${rows.reduce((sum, order) => sum + order.overtime, 0)} h extras fictícias`, '◴', 'amber')
-    ].join('');
+  function options() {
+    if (!data) return;
+    renderFilterPicker('tag', data.systems.map(s => [s.tag, s.name]));
+    renderFilterPicker('type', [...new Set(data.orders.map(o => o.type).filter(Boolean))].sort().map(t => [t, P.typeLabel(t)]));
+    renderFilterPicker('priority', [...new Set(data.orders.map(o => o.priority).filter(Boolean))].sort().map(p => [p, p]));
+    assets();
   }
 
-  function plantColor(plant) {
-    return plant.adherence >= 0.85 ? '#2e8a68' : plant.adherence >= 0.6 ? '#db9a2c' : '#d65b4b';
+  function assets() {
+    if (!data) return;
+    const list = [...new Set(data.orders.filter(o => matchesFilter(o.tag, f.tag)).map(o => o.asset).filter(Boolean))].sort();
+    const available = new Set(list);
+    f.asset = selectedValues('asset').filter(value => available.has(value));
+    renderFilterPicker('asset', list.map(v => [v, v]));
   }
 
-  function renderMap() {
-    const visiblePlants = plants.filter(plant => !selected.plant || plant.id === selected.plant);
-    const point = plant => ({ x: 100 + plant.x * 7.9, y: 25 + plant.y * 2.45 });
-    const hub = { x: 620, y: 108 };
-    const outline = 'M315 30 L485 18 L620 43 L733 31 L828 80 L851 155 L818 226 L733 268 L624 256 L522 290 L395 270 L304 221 L261 139 Z';
-    const routes = visiblePlants.map(plant => {
-      const { x, y } = point(plant);
-      return `<path class="route" d="M${hub.x} ${hub.y} Q${(hub.x + x) / 2} ${(hub.y + y) / 2 - 18} ${x} ${y}"/>`;
+  function field(label, value) {
+    return '<div><dt>' + esc(label) + '</dt><dd>' + esc(value || 'Não informado') + '</dd></div>';
+  }
+
+  function kpi(title, value, note, accent) {
+    return '<article class="kpi"' + (accent ? ' style="--accent:' + accent + '"' : '') + '><span>' + esc(title) + '</span><strong>' + esc(value) + '</strong><small>' + esc(note) + '</small></article>';
+  }
+
+  function formatHours(hours) {
+    if (hours == null) return '—';
+    return hours >= 24
+      ? (hours / 24).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' dias'
+      : hours.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h';
+  }
+
+  function renderSystemsList() {
+    if (!data) return;
+    const q = ($('#systemSearch')?.value || '').trim().toLocaleLowerCase('pt-BR');
+    const filteredSystems = data.systems.filter(s => !q || [s.name, s.tag, s.district, s.address].join(' ').toLocaleLowerCase('pt-BR').includes(q));
+    $('#systemCount').textContent = num(filteredSystems.length);
+    if (!filteredSystems.length) {
+      $('#systemsList').innerHTML = emptyHTML;
+      return;
+    }
+    const asOf = today();
+    $('#systemsList').innerHTML = filteredSystems.map(s => {
+      const sysFilter = { ...f, tag: [s.tag], asset: selectedValues('tag').length && !selectedValues('tag').includes(s.tag) ? [] : selectedValues('asset') };
+      const selected = P.filter(data, sysFilter);
+      const a = P.adherence(data, sysFilter);
+      const n = P.stats(selected);
+      const t = P.timing(P.filter(data, sysFilter, true), asOf);
+      const reliability = P.reliabilityByPlant(data, sysFilter).find(item => item.tag === s.tag);
+      const health = P.systemHealth(a.rate, t.overdue);
+      const badgeLabel = a.rate == null ? 'Sem plano' : pct(a.rate);
+      return '<button class="system-row" data-system="' + esc(s.tag) + '">' +
+        '<div class="system-row-top"><b>' + esc(s.name) + '</b><span class="badge ' + health + '">' + esc(badgeLabel) + '</span></div>' +
+        '<span class="system-meta"><span>' + num(n.done) + ' executadas de ' + num(n.total) + '</span><span>' + (t.overdue ? num(t.overdue) + ' vencida(s)' : esc(s.district || s.tag)) + '</span></span>' +
+        '<span class="system-reliability"><span>MTBF <b>' + formatHours(reliability?.mtbfHours) + '</b></span><span>MTTR <b>' + formatHours(reliability?.mttrHours) + '</b></span><span>Disponibilidade <b>' + pct(reliability?.availability) + '</b></span></span>' +
+        '<span class="mini-track"><i class="' + health + '" style="width:' + (a.rate == null ? 0 : a.rate * 100) + '%"></i></span>' +
+        '</button>';
     }).join('');
-    const nodes = visiblePlants.map(plant => {
-      const { x, y } = point(plant);
-      const color = plantColor(plant);
-      return `<g class="node" role="button" tabindex="0" aria-label="Filtrar por ${esc(plant.name)}" data-map-plant="${esc(plant.id)}" style="--node-color:${color}"><circle class="halo" cx="${x}" cy="${y}" r="12"/><circle cx="${x}" cy="${y}" r="5"/><text x="${x + 9}" y="${y + 3}">${esc(plant.id)}</text><title>${esc(plant.name)} · ${esc(plant.city)} · ${percent(plant.adherence)} de aderência fictícia</title></g>`;
-    }).join('');
-    $('#stateMap').innerHTML = `<svg viewBox="0 0 1000 315" role="img" aria-label="Diagrama esquemático, sem escala, com plantas fictícias no Piauí"><path class="land" d="${outline}"/><text class="map-caption" x="445" y="157">PIAUÍ</text><text class="map-caption" x="420" y="173">DIAGRAMA SEM ESCALA</text>${routes}${nodes}</svg>`;
-    $$('[data-map-plant]').forEach(node => {
-      const apply = () => {
-        selected.plant = selected.plant === node.dataset.mapPlant ? '' : node.dataset.mapPlant;
-        $('#plantFilter').value = selected.plant;
-        render();
-      };
-      node.addEventListener('click', apply);
-      node.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); apply(); } });
-    });
-  }
-
-  function renderMonthly(rows) {
-    const months = Array.from({ length: 12 }, (_, index) => {
-      const date = new Date(Date.UTC(2025, 10 + index, 1));
-      const year = date.getUTCFullYear(), month = date.getUTCMonth();
-      const values = rows.filter(order => {
-        const orderDate = new Date(order.opened + 'T12:00:00Z');
-        return orderDate.getUTCFullYear() === year && orderDate.getUTCMonth() === month;
-      });
-      return { label: monthNames[month], total: values.length, closed: values.filter(order => order.status === 'Concluída').length };
-    });
-    const max = Math.max(1, ...months.map(month => month.total));
-    $('#monthlyChart').innerHTML = months.map(month => `<div class="month-column" title="${month.total} ordens, ${month.closed} concluídas"><div class="bar-pair"><span class="bar" style="height:${Math.max(3, month.total / max * 100)}%"></span><span class="bar closed" style="height:${Math.max(3, month.closed / max * 100)}%"></span></div><span class="month-label">${month.label}</span></div>`).join('') + '<div class="chart-legend"><span><i></i>Total</span><span><i class="closed-key"></i>Concluídas</span></div>';
-  }
-
-  function renderPlantHealth() {
-    const visible = plants.filter(plant => !selected.plant || plant.id === selected.plant)
-      .sort((a, b) => a.adherence - b.adherence).slice(0, 6);
-    $('#plantHealth').innerHTML = visible.map(plant => `<div class="health-row"><div class="health-name" title="${esc(plant.name)}">${esc(plant.name)}<small>${esc(plant.city)}</small></div><div class="progress"><span style="width:${plant.adherence * 100}%;--bar-color:${plantColor(plant)}"></span></div><div class="health-value">${percent(plant.adherence)}</div></div>`).join('');
-  }
-
-  function renderTypeBreakdown(rows) {
-    const colors = { Preventiva: '#e97732', Corretiva: '#167a70', Preditiva: '#7593a0', Emergencial: '#d65b4b' };
-    const counts = Object.fromEntries(['Preventiva', 'Corretiva', 'Preditiva', 'Emergencial'].map(type => [type, rows.filter(row => row.type === type).length]));
-    const max = Math.max(1, ...Object.values(counts));
-    $('#typeBreakdown').innerHTML = Object.entries(counts).map(([type, count]) => `<div><div class="type-row-head"><span>${type}</span><b>${count}</b></div><div class="progress"><span style="width:${count / max * 100}%;--bar-color:${colors[type]}"></span></div></div>`).join('');
-  }
-
-  function groupBy(rows, key, labelKey) {
-    const map = new Map();
-    rows.forEach(row => {
-      const value = row[key];
-      const item = map.get(value) || { label: row[labelKey], count: 0, hours: 0, downtime: 0 };
-      item.count++;
-      item.hours += row.hours;
-      item.downtime += row.downtime;
-      map.set(value, item);
-    });
-    return [...map.entries()].map(([id, value]) => ({ id, ...value })).sort((a, b) => b.count - a.count);
-  }
-
-  function table(headers, rows, emptyMessage = 'Nenhum registro corresponde aos filtros.') {
-    if (!rows.length) return `<div class="table-empty">${esc(emptyMessage)}</div>`;
-    return `<table><thead><tr>${headers.map(header => `<th>${esc(header)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
-  }
-
-  function statusPill(text, kind) {
-    return `<span class="status ${kind}">${esc(text)}</span>`;
-  }
-
-  function renderEngineering(rows) {
-    const completed = rows.filter(row => row.status === 'Concluída');
-    const corrective = completed.filter(row => row.type === 'Corretiva' || row.type === 'Emergencial');
-    const assetsByCount = groupBy(corrective, 'asset', 'asset').slice(0, 10);
-    const meanHours = completed.length ? completed.reduce((sum, row) => sum + row.hours, 0) / completed.length : 0;
-    const assetsCount = new Set(rows.map(row => row.asset)).size;
-    $('#engineeringSummary').innerHTML = [
-      kpi('Ordens corretivas concluídas', corrective.length, 'Corretivas e emergenciais', '⌁'),
-      kpi('Ativos com intervenção', assetsCount, 'No recorte selecionado', '⚙', 'teal'),
-      kpi('Tempo médio por ordem', formatNumber(meanHours) + ' h', 'Horas fictícias nas ordens concluídas', '◴', 'amber')
-    ].join('');
-    $('#assetRanking').innerHTML = table(['Ativo', 'Intervenções', 'Horas apontadas', 'Tipo mais frequente'], assetsByCount.map(item => {
-      const assetOrders = corrective.filter(row => row.asset === item.id);
-      const dominantType = groupBy(assetOrders, 'type', 'type')[0]?.label || '—';
-      return `<tr><td><strong>${esc(item.label)}</strong></td><td>${item.count}</td><td>${formatNumber(item.hours)} h</td><td>${esc(dominantType)}</td></tr>`;
-    }));
-    const repeated = groupBy(completed, 'problem', 'problem').filter(item => item.count >= 4).slice(0, 6);
-    $('#recurrenceCards').innerHTML = repeated.length ? repeated.map(item => `<div class="recurrence"><strong>${esc(item.label)}</strong><span>${item.count} ordens concluídas associadas. Avaliar histórico e contexto operacional.</span></div>`).join('') : '<div class="table-empty">Sem recorrências destacadas neste recorte.</div>';
-  }
-
-  function renderDiagnostics(rows) {
-    const completed = rows.filter(row => row.status === 'Concluída');
-    const sets = [
-      ['Componentes', 'component'],
-      ['Problemas registrados', 'problem'],
-      ['Causas registradas', 'cause'],
-      ['Ações registradas', 'action']
-    ];
-    $('#diagnosticGrid').innerHTML = sets.map(([title, key]) => {
-      const ranking = groupBy(completed, key, key).slice(0, 5);
-      return `<article class="diagnostic-card"><h3>${title}</h3><ol>${ranking.map(item => `<li>${esc(item.label)} <span>${item.count} OS</span></li>`).join('') || '<li>Sem registros no período</li>'}</ol></article>`;
-    }).join('');
-    const evidence = completed.slice().sort((a, b) => b.opened.localeCompare(a.opened)).slice(0, 24);
-    $('#diagnosticTable').innerHTML = table(['Ordem', 'Planta', 'Ativo', 'Item', 'Problema', 'Causa registrada', 'Ação'], evidence.map(row => `<tr><td><strong>${esc(row.id)}</strong></td><td>${esc(row.plant)}</td><td>${esc(row.asset)}</td><td>${esc(row.component)}</td><td>${esc(row.problem)}</td><td>${esc(row.cause)}</td><td>${esc(row.action)}</td></tr>`));
-  }
-
-  function renderPlans() {
-    const visible = plants.filter(plant => !selected.plant || plant.id === selected.plant);
-    const totalPlan = visible.reduce((sum, plant) => sum + plant.plan, 0);
-    const totalDone = visible.reduce((sum, plant) => sum + plant.done, 0);
-    const delayed = visible.filter(plant => plant.adherence < 0.6).length;
-    $('#planKpis').innerHTML = [
-      kpi('Ordens previstas', totalPlan, 'Programação fictícia do período', '◷'),
-      kpi('Ordens executadas', totalDone, `${totalPlan ? percent(totalDone / totalPlan) : '0%'} de aderência agregada`, '✓', 'green'),
-      kpi('Plantas em situação crítica', delayed, 'Aderência abaixo de 60%', '!', delayed ? 'amber' : 'green')
-    ].join('');
-    $('#plansTable').innerHTML = table(['Unidade', 'Município', 'Ordens planejadas', 'Executadas', 'Aderência', 'Situação'], visible.slice().sort((a, b) => a.adherence - b.adherence).map(plant => `<tr><td><strong>${esc(plant.name)}</strong></td><td>${esc(plant.city)}</td><td>${plant.plan}</td><td>${plant.done}</td><td>${percent(plant.adherence)}</td><td>${statusPill(statusLabel(plant.adherence), statusClass(plant.adherence))}</td></tr>`));
-  }
-
-  function renderOrders(rows) {
-    const ordered = rows.slice().sort((a, b) => b.opened.localeCompare(a.opened));
-    $('#ordersCount').textContent = `${rows.length} ordens no recorte`;
-    $('#ordersTable').innerHTML = table(['Ordem', 'Unidade', 'Ativo', 'Tipo', 'Prioridade', 'Abertura', 'Equipe', 'Horas', 'Status'], ordered.map(row => {
-      const kind = row.status === 'Concluída' ? 'good' : row.status === 'Em andamento' ? 'warn' : 'neutral';
-      return `<tr><td><strong>${esc(row.id)}</strong></td><td>${esc(row.plant)}</td><td>${esc(row.asset)}</td><td>${esc(row.type)}</td><td>${esc(row.priority)}</td><td>${formatDate(row.opened)}</td><td>${esc(row.team)}</td><td>${row.hours} h</td><td>${statusPill(row.status, kind)}</td></tr>`;
-    }));
-  }
-
-  function renderStops(rows) {
-    const stopOrders = rows.filter(row => row.stopped);
-    const events = stopOrders.length;
-    const downtime = stopOrders.reduce((sum, row) => sum + row.downtime, 0);
-    const operatingHours = selected.days * 24;
-    const availability = operatingHours ? Math.max(0, 1 - downtime / operatingHours) : 0;
-    $('#stopKpis').innerHTML = [
-      kpi('Eventos de parada', events, 'Ordens fictícias com parada registrada', 'Ⅱ', events ? 'amber' : 'green'),
-      kpi('Horas indisponíveis', formatNumber(downtime) + ' h', 'Somatório cenográfico de eventos', '◴', 'orange'),
-      kpi('Disponibilidade estimada', percent(availability), 'Estimativa agregada para demonstração', '◉', availability >= 0.85 ? 'green' : 'amber')
-    ].join('');
-    const grouped = groupBy(stopOrders, 'plantId', 'plant');
-    const visiblePlants = plants.filter(plant => !selected.plant || plant.id === selected.plant);
-    const reportDays = Math.min(selected.days, 365);
-    $('#stopsTable').innerHTML = table(['Unidade', 'Município', 'Eventos', 'Horas paradas', 'Disponibilidade estimada'], visiblePlants.map(plant => {
-      const item = grouped.find(row => row.id === plant.id);
-      const hours = item?.downtime || 0;
-      const estimate = Math.max(0, 1 - hours / (reportDays * 24));
-      return `<tr><td><strong>${esc(plant.name)}</strong></td><td>${esc(plant.city)}</td><td>${item?.count || 0}</td><td>${formatNumber(hours)} h</td><td>${percent(estimate)}</td></tr>`;
-    }));
-  }
-
-  function renderTeams(rows) {
-    const groups = groupBy(rows, 'teamId', 'team');
-    const hours = rows.reduce((sum, row) => sum + row.hours, 0);
-    const overtime = rows.reduce((sum, row) => sum + row.overtime, 0);
-    const completed = rows.filter(row => row.status === 'Concluída').length;
-    $('#teamKpis').innerHTML = [
-      kpi('Horas apontadas', formatNumber(hours) + ' h', 'Horas de trabalho nas ordens filtradas', '◴'),
-      kpi('Horas extras', formatNumber(overtime) + ' h', 'Valor agregado fictício', '＋', 'amber'),
-      kpi('Ordens concluídas', completed, 'Execução no período selecionado', '✓', 'green')
-    ].join('');
-    $('#teamsTable').innerHTML = table(['Equipe', 'Especialidade', 'Ordens', 'Concluídas', 'Horas apontadas', 'Horas extras', 'OS concluídas / 100 h'], teams.filter(team => !selected.team || team.id === selected.team).map(team => {
-      const teamOrders = rows.filter(row => row.teamId === team.id);
-      const done = teamOrders.filter(row => row.status === 'Concluída').length;
-      const teamHours = teamOrders.reduce((sum, row) => sum + row.hours, 0);
-      const extra = teamOrders.reduce((sum, row) => sum + row.overtime, 0);
-      const productivity = teamHours ? done / teamHours * 100 : 0;
-      return `<tr><td><strong>${esc(team.name)}</strong></td><td>${esc(team.specialty)}</td><td>${teamOrders.length}</td><td>${done}</td><td>${teamHours} h</td><td>${extra} h</td><td>${formatNumber(productivity)}</td></tr>`;
-    }));
-    if (!groups.length) $('#teamsTable').innerHTML = '<div class="table-empty">Sem ordens para as equipes selecionadas.</div>';
   }
 
   function render() {
-    renderHeader();
-    const rows = filteredOrders();
-    renderKpis(rows);
+    if (!data) {
+      $('#empty').hidden = false;
+      $('#dashboard').hidden = true;
+      $('#scope').textContent = '';
+      return;
+    }
+    $('#empty').hidden = true;
+    $('#dashboard').hidden = false;
+    rows = P.filter(data, f);
+    rankEvidence = [];
+    pageNo = 1;
+    const s = P.stats(rows), a = P.adherence(data, f);
+    $('#kpis').innerHTML =
+      kpi('Ordens no período', num(s.total), 'Instalações e ativos selecionados') +
+      kpi('Ordens executadas', num(s.done), pct(s.total ? s.done / s.total : null) + ' do total', '#20815b') +
+      kpi('Em aberto', num(s.open), 'Aguardando execução', '#b87918') +
+      kpi('Não executadas', num(s.notdone), 'Mantidas na base do plano', '#c14442');
+
+    $('#scope').textContent = (f.tag.length ? num(f.tag.length) + ' instalação(ões)' : num(data.systems.length) + ' instalações') + ' · Entrada: ' + fmt(f.from) + ' a ' + fmt(f.to);
+    updateActiveFilters();
+    renderSystemsList();
+    $('#planSummary').innerHTML =
+      '<strong class="plan-number">' + pct(a.rate) + '</strong>' +
+      '<div class="sub">' + num(a.done) + ' executadas de ' + num(a.total) + ' ordens do plano</div>' +
+      '<div class="sub" style="margin-top:10px">' + pct(a.withinRate) + ' com início real dentro do período</div>';
+
+    renderMonthly();
+    renderTypeDistribution();
+    renderIntelligence();
+    renderICM();
+    renderStops();
+    renderTopAssets();
+    renderDeadlines();
+    renderOrders();
+    renderHours();
     renderMap();
-    renderMonthly(rows);
-    renderPlantHealth();
-    renderTypeBreakdown(rows);
-    renderEngineering(rows);
-    renderDiagnostics(rows);
-    renderPlans();
-    renderOrders(rows);
-    renderStops(rows);
-    renderTeams(rows);
   }
 
-  function downloadCsv(key) {
-    const rows = filteredOrders();
-    const exports = {
-      orders: {
-        filename: 'pcm360-ordens-ficticias.csv',
-        fields: ['id', 'plant', 'city', 'asset', 'type', 'priority', 'opened', 'closed', 'team', 'hours', 'overtime', 'status'],
-        headers: ['Ordem', 'Planta', 'Município', 'Ativo', 'Tipo', 'Prioridade', 'Abertura', 'Conclusão', 'Equipe', 'Horas', 'Horas extras', 'Status'],
-        data: rows
-      },
-      diagnostics: {
-        filename: 'pcm360-diagnostico-ficticio.csv',
-        fields: ['id', 'plant', 'asset', 'component', 'problem', 'cause', 'action'],
-        headers: ['Ordem', 'Planta', 'Ativo', 'Item', 'Problema', 'Causa registrada', 'Ação'],
-        data: rows.filter(row => row.status === 'Concluída')
-      },
-      plans: {
-        filename: 'pcm360-planos-ficticios.csv',
-        fields: ['name', 'city', 'plan', 'done', 'adherence'],
-        headers: ['Planta', 'Município', 'Planejadas', 'Executadas', 'Aderência'],
-        data: plants.filter(plant => !selected.plant || plant.id === selected.plant).map(plant => ({ ...plant, name: plant.name }))
-      },
-      teams: {
-        filename: 'pcm360-equipes-ficticias.csv',
-        fields: ['name', 'specialty', 'orders', 'completed', 'hours', 'overtime', 'productivity'],
-        headers: ['Equipe', 'Especialidade', 'Ordens', 'Concluídas', 'Horas', 'Horas extras', 'OS concluídas por 100 h'],
-        data: teams.filter(team => !selected.team || team.id === selected.team).map(team => {
-          const teamOrders = rows.filter(row => row.teamId === team.id);
-          const hours = teamOrders.reduce((sum, row) => sum + row.hours, 0);
-          const completed = teamOrders.filter(row => row.status === 'Concluída').length;
-          return { ...team, orders: teamOrders.length, completed, hours, overtime: teamOrders.reduce((sum, row) => sum + row.overtime, 0), productivity: hours ? completed / hours * 100 : 0 };
-        })
+  function renderHours() {
+    const groups = new Map();
+    for (const order of rows) {
+      const name = order.team || 'Equipe não informada';
+      const current = groups.get(name) || { orders: 0, done: 0, hours: 0, overtime: 0 };
+      current.orders++;
+      if (P.status(order) === 'done') current.done++;
+      current.hours += Number(order.hours || 0);
+      current.overtime += Number(order.overtime || 0);
+      groups.set(name, current);
+    }
+    const list = [...groups].map(([name, stats]) => ({ name, ...stats }))
+      .sort((a, b) => b.hours - a.hours);
+    const totalHours = list.reduce((sum, item) => sum + item.hours, 0);
+    const totalOvertime = list.reduce((sum, item) => sum + item.overtime, 0);
+    const done = list.reduce((sum, item) => sum + item.done, 0);
+    $('#hoursKpis').innerHTML =
+      kpi('Horas apontadas', num(totalHours) + ' h', 'Total agregado nas ordens filtradas') +
+      kpi('Horas extras fictícias', num(totalOvertime) + ' h', 'Apontamentos sintéticos da demonstração', '#b87918') +
+      kpi('Ordens concluídas', num(done), 'Ordens executadas pelas equipes', '#20815b') +
+      kpi('Equipes no recorte', num(list.length), 'Sem dados individuais de colaboradores');
+    $('#hoursTable').innerHTML = list.length
+      ? '<table><thead><tr><th>Equipe</th><th>Ordens</th><th>Concluídas</th><th>Horas apontadas</th><th>Horas extras</th><th>OS concluídas / 100 h</th></tr></thead><tbody>' +
+        list.map(item => '<tr><td><b>' + esc(item.name) + '</b></td><td>' + num(item.orders) + '</td><td>' + num(item.done) + '</td><td>' + num(item.hours) + ' h</td><td>' + num(item.overtime) + ' h</td><td>' + (item.hours ? num(item.done / item.hours * 100) : '—') + '</td></tr>').join('') +
+        '</tbody></table>'
+      : emptyHTML;
+  }
+
+  function renderMonthly() {
+    const buckets = new Map();
+    for (const o of rows) {
+      const key = (o.created || '').slice(0, 7);
+      if (!key) continue;
+      if (!buckets.has(key)) buckets.set(key, { total: 0, done: 0 });
+      const b = buckets.get(key);
+      b.total++;
+      if (P.status(o) === 'done') b.done++;
+    }
+    const list = [...buckets].sort((a, b) => a[0].localeCompare(b[0]));
+    const max = Math.max(1, ...list.map(v => v[1].total));
+    $('#monthly').innerHTML = list.length
+      ? '<div class="monthly">' + list.map(([m, v]) => {
+          const execPct = Math.round((v.done / v.total) * 100);
+          return '<div class="month" title="' + esc(m) + ': ' + v.done + ' executadas / ' + v.total + ' ordens (' + execPct + '%)">' +
+            '<strong>' + num(v.total) + '</strong>' +
+            '<span class="pct-tag">' + execPct + '%</span>' +
+            '<div class="column" style="height:' + Math.max(4, v.total / max * 110) + 'px"><i style="height:' + (v.done / v.total * 100) + '%"></i></div>' +
+            '<small>' + m.slice(5) + '/' + m.slice(2, 4) + '</small>' +
+            '</div>';
+        }).join('') + '</div>'
+      : emptyHTML;
+  }
+
+  function renderTypeDistribution() {
+    const el = $('#typeDistribution');
+    if (!el) return;
+    const types = P.byType(rows);
+    if (!types.length) {
+      el.innerHTML = emptyHTML;
+      return;
+    }
+    const max = types[0].total;
+    el.innerHTML = '<div class="type-list">' + types.slice(0, 8).map(t => {
+      const isSelected = selectedValues('type').includes(t.type);
+      return '<button type="button" class="type-row' + (isSelected ? ' active-filter' : '') + '" data-type-filter="' + esc(t.type) + '">' +
+        '<div class="row-head"><b>' + esc(t.label) + '</b><span>' + num(t.total) + ' ordens (' + pct(t.rate) + ' exec.)</span></div>' +
+        '<div class="row-sub"><span>' + num(t.done) + ' executadas · ' + num(t.open) + ' em aberto · ' + num(t.notdone) + ' não exec.</span><span>' + num(t.planned) + ' com plano</span></div>' +
+        '<span class="mini-track"><i style="width:' + (t.total / max * 100) + '%"></i></span>' +
+        '</button>';
+    }).join('') + '</div>';
+  }
+
+  function renderTopAssets() {
+    const list = P.topAssets(rows).slice(0, 8);
+    const sysNameByTag = new Map((data?.systems || []).map(s => [s.tag, s.name]));
+    const html = list.length
+      ? '<div class="asset-list">' + list.map(a => {
+          const key = rankEvidence.push({ name: 'Ativo ' + a.asset + ' · ' + a.equipment, count: a.total, ids: a.ids }) - 1;
+          const sysName = sysNameByTag.get(a.tag) || a.tag;
+          const max = list[0].total || 1;
+          return '<button type="button" class="asset-row" data-rank="' + key + '">' +
+            '<div class="row-head"><b>' + esc(a.asset) + '</b><span>' + num(a.done) + ' exec. / ' + num(a.total) + ' OS (' + num(a.corrective) + ' corr.)</span></div>' +
+            '<div class="row-sub"><span>' + esc(a.equipment) + ' · ' + esc(sysName) + '</span><span>' + num(a.open) + ' aberta(s)</span></div>' +
+            '<span class="mini-track"><i style="width:' + (a.total / max * 100) + '%"></i></span>' +
+            '</button>';
+        }).join('') + '</div>'
+      : emptyHTML;
+    if ($('#topAssetsOverview')) $('#topAssetsOverview').innerHTML = html;
+    if ($('#topAssetsIcm')) $('#topAssetsIcm').innerHTML = html;
+  }
+
+  function renderIntelligence() {
+    const kpiEl = $('#engKpis');
+    if (!kpiEl) return;
+    const asOf = today();
+    const m = P.engineeringMetrics(data, rows, asOf);
+    const insights = P.decisionInsights(data, rows, f);
+    const actors = P.badActors(rows).slice(0, 20);
+    const sysNameByTag = new Map((data?.systems || []).map(s => [s.tag, s.name]));
+
+    kpiEl.innerHTML =
+      kpi('Ordens preventivas, preditivas e de engenharia', pct(m.proactiveRate), num(m.proactive) + ' ordens; referência SMRP ≥ 80%', m.proactiveRate >= 0.75 ? '#20815b' : m.proactiveRate >= 0.60 ? '#b87918' : '#c14442') +
+      kpi('Ordens com prioridade emergencial', pct(m.emergencyRate), num(m.prioEmerg) + ' ordens marcadas como emergência', m.emergencyRate <= 0.10 ? '#20815b' : m.emergencyRate <= 0.20 ? '#b87918' : '#c14442') +
+      kpi('Ordens com reset ou rearme', pct(m.palliativeRate), num(m.palliativeCount) + ' ordens com reset, rearme ou ajuste', m.palliativeRate <= 0.12 ? '#20815b' : '#c14442') +
+      kpi('Cobertura ICM nas Corretivas', pct(m.icmCoverageRate), num(m.corrWithIcm) + ' de ' + num(m.correctiveDoneTotal) + ' corretivas com catálogo completo', '#d96827');
+
+    const mixEl = $('#maintenanceMixBar');
+    if (mixEl) {
+      if (!m.total) {
+        mixEl.innerHTML = emptyHTML;
+      } else {
+        const segs = [
+          ['prev', 'Preventiva', m.preventive, '#d96827'],
+          ['pred', 'Preditiva', m.predictive, '#e69a63'],
+          ['eng', 'Engenharia de manutenção', m.engineering, '#20815b'],
+          ['cplan', 'Corretiva programada', m.correctivePlan, '#b87918'],
+          ['serv', 'Serviços', m.service, '#8592ad'],
+          ['cemerg', 'Corretiva emergencial', m.correctiveEmerg, '#c14442'],
+          ['reactive', 'Reativa', m.reactive, '#7e4aa8']
+        ];
+        mixEl.innerHTML =
+          '<div class="mix-bar-track">' +
+          segs.filter(s => s[2] > 0).map(s => '<div class="mix-seg ' + s[0] + '" style="width:' + (s[2] / m.total * 100) + '%" title="' + esc(s[1]) + ': ' + num(s[2]) + '"></div>').join('') +
+          '</div>' +
+          '<div class="mix-legend">' +
+          segs.map(s =>
+            '<div class="mix-item">' +
+            '<div class="mix-item-head"><span><i class="dot" style="background:' + s[3] + '"></i>' + esc(s[1]) + '</span><b>' + pct(s[2] / m.total) + '</b></div>' +
+            '<small>' + num(s[2]) + ' ordens no período</small>' +
+            '</div>'
+          ).join('') +
+          '</div>';
+      }
+    }
+
+    const decEl = $('#decisionCards');
+    if (decEl) {
+      decEl.innerHTML = insights.length
+        ? insights.map(ins => {
+            let btn = '';
+            if (ins.ids && ins.ids.length) {
+              const key = rankEvidence.push({ name: ins.title, count: ins.ids.length, ids: ins.ids }) - 1;
+              btn = '<button type="button" data-rank="' + key + '">Ver ' + num(ins.ids.length) + ' OS ↗</button>';
+            }
+            return '<article class="decision-card ' + ins.severity + '">' +
+              '<div><span class="eyebrow blue">' + esc(ins.category) + '</span><h3>' + esc(ins.title) + '</h3><p>' + esc(ins.body) + '</p></div>' +
+              (btn ? '<div class="decision-action">' + btn + '</div>' : '') +
+              '</article>';
+          }).join('')
+        : emptyHTML;
+    }
+
+    const actorsEl = $('#badActorsTable');
+    if (actorsEl) {
+      actorsEl.innerHTML = actors.length
+        ? '<table><thead><tr><th>TAG Ativo</th><th>Equipamento / Objeto Técnico</th><th>Instalação</th><th>Total OS</th><th>Corretivas</th><th>Emergenciais</th><th>Retrabalho (&lt; 30d)</th><th>MTBF Estimado</th></tr></thead><tbody>' +
+          actors.map(a => {
+            const key = rankEvidence.push({ name: 'Bad Actor: ' + a.asset + ' (' + a.equipment + ')', count: a.total, ids: a.ids }) - 1;
+            const sysName = sysNameByTag.get(a.tag) || a.tag;
+            const mtbfText = a.mtbfDays == null ? '—' : Math.round(a.mtbfDays) + ' dias';
+            const reworkBadge = a.rework30d > 0 ? '<span class="badge critical">' + num(a.rework30d) + ' reincidência(s)</span>' : '<span class="badge good">0</span>';
+            return '<tr>' +
+              '<td><button class="link" data-rank="' + key + '">' + esc(a.asset) + ' ↗</button></td>' +
+              '<td><b>' + esc(a.equipment) + '</b></td>' +
+              '<td><button class="link" data-system="' + esc(a.tag) + '">' + esc(sysName) + '</button></td>' +
+              '<td>' + num(a.total) + '</td>' +
+              '<td><b>' + num(a.corrective) + '</b></td>' +
+              '<td>' + num(a.emergency) + '</td>' +
+              '<td>' + reworkBadge + '</td>' +
+              '<td><strong>' + esc(mtbfText) + '</strong></td>' +
+              '</tr>';
+          }).join('') + '</tbody></table>'
+        : emptyHTML;
+    }
+  }
+
+  function ranks(kind, source = rows) {
+    return kind === 'action' ? P.rank(data.actions, source, 'action') : P.rank(data.items, source, kind);
+  }
+
+  function rankHTML(list) {
+    if (!list.length) return emptyHTML;
+    const max = list[0].count;
+    return '<div class="rank-list">' + list.slice(0, 8).map(r => {
+      const key = rankEvidence.push(r) - 1;
+      return '<button class="rank" data-rank="' + key + '"><span class="rank-label"><span>' + esc(r.name) + '</span><b>' + num(r.count) + ' OS</b></span><span class="rank-bar"><i style="width:' + (r.count / max * 100) + '%"></i></span></button>';
+    }).join('') + '</div>';
+  }
+
+  function renderICM() {
+    $('#icmCards').innerHTML = [
+      ['component', 'ITENS', 'Itens que mais falharam'],
+      ['cause', 'CAUSAS', 'Causas registradas'],
+      ['action', 'MEDIDAS', 'Intervenções realizadas']
+    ].map(([k, e, h]) =>
+      '<article class="card"><div class="card-top"><div><span class="eyebrow">' + e + '</span><h2>' + h + '</h2></div></div>' + rankHTML(ranks(k)) + '</article>'
+    ).join('');
+
+    const matrix = P.icmMatrix(data, rows).slice(0, 15);
+    const matrixEl = $('#icmMatrixTable');
+    if (matrixEl) {
+      matrixEl.innerHTML = matrix.length
+        ? '<table><thead><tr><th>Item (Componente)</th><th>Problema</th><th>Causa registrada</th><th>Medida realizada</th><th>OS Exec.</th></tr></thead><tbody>' +
+          matrix.map(m => {
+            const key = rankEvidence.push({ name: m.component + ' → ' + m.cause + ' → ' + m.action, count: m.count, ids: m.ids }) - 1;
+            return '<tr>' +
+              '<td><b>' + esc(m.component) + '</b></td>' +
+              '<td>' + esc(m.problem) + '</td>' +
+              '<td>' + esc(m.cause) + '</td>' +
+              '<td>' + esc(m.action) + '</td>' +
+              '<td><button class="link" data-rank="' + key + '">' + num(m.count) + ' OS ↗</button></td>' +
+              '</tr>';
+          }).join('') + '</tbody></table>'
+        : emptyHTML;
+    }
+  }
+
+  function renderStops() {
+    const records = P.stopRecords(data, rows);
+    const flaggedByPlant = P.flaggedStopOrders(data, f);
+    const flaggedTotal = flaggedByPlant.reduce((sum, item) => sum + item.count, 0);
+    const reliability = P.reliabilityByPlant(data, f);
+    const assetReliability = P.reliabilityByAsset(data, f);
+    const reasons = new Map(), years = new Map(), assets = new Map(), groups = new Map(), plants = new Set();
+    for (const r of records) {
+      const add = (map, key) => {
+        if (!map.has(key)) map.set(key, { total: 0, confirmed: 0 });
+        const item = map.get(key);
+        item.total++;
+        if (r.status === 'Confirmada') item.confirmed++;
+      };
+      add(reasons, r.reason);
+      add(years, r.year);
+      add(assets, r.asset);
+      plants.add(r.tag);
+      const key = [r.year, r.tag, r.asset, r.reason].join('\\u0000');
+      if (!groups.has(key)) groups.set(key, { year: r.year, tag: r.tag, plant: r.plant, asset: r.asset, reason: r.reason, ids: new Set(), total: 0, confirmed: 0, durations: [] });
+      const group = groups.get(key);
+      group.ids.add(r.id);
+      group.total++;
+      if (r.status === 'Confirmada') group.confirmed++;
+      if (r.durationDays != null) group.durations.push(r.durationDays);
+    }
+    const reasonList = [...reasons].sort((a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0], 'pt-BR'));
+    const yearList = [...years].sort((a, b) => b[0].localeCompare(a[0]));
+    const assetList = [...assets].sort((a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0], 'pt-BR')).slice(0, 10);
+    const groupList = [...groups.values()].map(g => ({ ...g, ids: [...g.ids], avgDuration: g.durations.length ? g.durations.reduce((sum, value) => sum + value, 0) / g.durations.length : null }))
+      .sort((a, b) => b.total - a.total || b.year.localeCompare(a.year) || a.plant.localeCompare(b.plant, 'pt-BR') || a.asset.localeCompare(b.asset, 'pt-BR'));
+
+    const confirmedCount = records.filter(r => r.status === 'Confirmada').length;
+    $('#stopKpis').innerHTML =
+      kpi('Paradas identificadas', num(records.length), 'Ordens distintas no período', '#c14442') +
+      kpi('Paradas confirmadas', num(confirmedCount), records.length ? pct(confirmedCount / records.length) + ' do total' : 'Sem registros', '#20815b') +
+      kpi('Plantas atingidas', num(plants.size), 'Instalações com ocorrência', '#b87918') +
+      kpi('Ativos envolvidos', num(assets.size), 'Ativos com ocorrência', '#d96827');
+
+    $('#flaggedStopSummary').innerHTML =
+      kpi('Ordens com Parada = X', num(flaggedTotal), 'Ordens distintas no período da nota', '#c14442') +
+      kpi('Plantas com ocorrências', num(flaggedByPlant.length), 'TAG Planta distinta', '#b87918');
+    $('#flaggedStops').innerHTML = flaggedByPlant.length
+      ? '<table><thead><tr><th>Planta</th><th>TAG Planta</th><th>Total</th><th>Concluídas</th><th>Em aberto</th><th>Canceladas</th><th>Outras situações</th></tr></thead><tbody>' +
+        flaggedByPlant.map(item => {
+          const key = rankEvidence.push({ name: item.plant + ' · Ordens com flag de parada', count: item.count, ids: item.ids }) - 1;
+          return '<tr><td><b>' + esc(item.plant) + '</b></td><td>' + esc(item.tag) + '</td>' +
+            '<td><button class="link" data-rank="' + key + '">' + num(item.count) + ' OS ↗</button></td>' +
+            '<td>' + num(item.done) + '</td><td>' + num(item.open) + '</td>' +
+            '<td>' + num(item.cancelled) + '</td><td>' + num(item.other) + '</td></tr>';
+        }).join('') + '</tbody></table>'
+      : emptyHTML;
+
+    const reliabilityEvents = reliability.reduce((sum, item) => sum + item.events, 0);
+    const reliabilityClosed = reliability.reduce((sum, item) => sum + item.closed, 0);
+    const duration = hours => {
+      if (hours == null) return '—';
+      return hours >= 24
+        ? (hours / 24).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' dias (' + hours.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h)'
+        : hours.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' h';
+    };
+    const availabilityCell = value => {
+      const rate = value == null ? null : Math.max(0, Math.min(1, value));
+      const level = rate == null ? 'unavailable' : rate >= 0.85 ? 'good' : rate >= 0.6 ? 'warn' : 'critical';
+      return '<div class="availability-cell"><b>' + pct(value) + '</b><span class="availability-bar" aria-hidden="true"><i class="' + level + '" style="width:' + (rate == null ? 0 : rate * 100) + '%"></i></span></div>';
+    };
+    const plantReliabilityRanking = [...reliability].sort((a, b) =>
+      (a.availability == null ? 1 : 0) - (b.availability == null ? 1 : 0) ||
+      (a.availability ?? 0) - (b.availability ?? 0) || a.plant.localeCompare(b.plant, 'pt-BR')
+    );
+    $('#reliabilitySummary').innerHTML =
+      kpi('Avarias encerradas tecnicamente', num(reliabilityEvents), 'Ordens ZNTP/ZNTE com Parada = X e início válido', '#c14442') +
+      kpi('Reparos com duração válida', num(reliabilityClosed), 'Ordens com início e fim da avaria válidos', '#20815b');
+    $('#reliabilityTable').innerHTML = plantReliabilityRanking.length
+      ? '<div class="reliability-ranking"><table class="reliability-ranking-table"><thead><tr><th>Rank</th><th>Planta</th><th>Avarias consideradas</th><th>MTBF médio</th><th>Intervalos</th><th>MTTR médio</th><th>Reparos válidos</th><th>Disponibilidade</th></tr></thead><tbody>' +
+        plantReliabilityRanking.map((item, index) =>
+          '<tr><td><span class="reliability-rank">' + (index + 1) + '</span></td>' +
+          '<td><b>' + esc(item.plant) + '</b><br><span class="small-note">' + esc(item.tag) + '</span></td>' +
+          '<td>' + num(item.events) + '</td><td>' + duration(item.mtbfHours) + '</td><td>' + num(item.intervals) + '</td>' +
+          '<td>' + duration(item.mttrHours) + '</td><td>' + num(item.closed) + '</td><td>' + availabilityCell(item.availability) + '</td></tr>'
+        ).join('') + '</tbody></table><div class="reliability-ranking-cards">' +
+        plantReliabilityRanking.map((item, index) =>
+          '<article class="reliability-rank-card"><div class="reliability-rank-heading"><span class="reliability-rank">' + (index + 1) + '</span>' +
+          '<div class="reliability-rank-plant"><b>' + esc(item.plant) + '</b><small>' + esc(item.tag) + '</small></div>' +
+          '<strong class="reliability-rank-value">' + pct(item.availability) + '</strong></div>' +
+          '<div class="reliability-rank-bar">' + availabilityCell(item.availability) + '</div>' +
+          '<div class="reliability-rank-metrics"><span>MTBF <b>' + duration(item.mtbfHours) + '</b></span><span>MTTR <b>' + duration(item.mttrHours) + '</b></span></div>' +
+          '</article>'
+        ).join('') + '</div></div>'
+      : emptyHTML;
+
+    const assetReliabilityEvents = assetReliability.reduce((sum, item) => sum + item.events, 0);
+    const assetReliabilityClosed = assetReliability.reduce((sum, item) => sum + item.closed, 0);
+    const assetReliabilityRanking = [...assetReliability].sort((a, b) =>
+      (a.availability == null ? 1 : 0) - (b.availability == null ? 1 : 0) ||
+      (a.availability ?? 0) - (b.availability ?? 0) ||
+      a.asset.localeCompare(b.asset, 'pt-BR')
+    );
+    $('#assetReliabilitySummary').innerHTML =
+      kpi('Ativos com avaria registrada', num(assetReliability.length), 'Ordens ZNTP/ZNTE agrupadas pela TAG do ativo', '#d96827') +
+      kpi('Avarias encerradas tecnicamente', num(assetReliabilityEvents), 'Ordens ZNTP/ZNTE com Parada = X e início válido', '#c14442') +
+      kpi('Reparos com duração válida', num(assetReliabilityClosed), 'Ordens com início e fim da avaria válidos', '#20815b');
+    $('#assetReliabilityTable').innerHTML = assetReliabilityRanking.length
+      ? '<div class="reliability-ranking"><table class="asset-reliability-ranking-table"><thead><tr><th>Rank</th><th>Ativo</th><th>Equipamento</th><th>Planta</th><th>Avarias consideradas</th><th>MTBF médio</th><th>Intervalos</th><th>MTTR médio</th><th>Reparos válidos</th><th>Disponibilidade</th></tr></thead><tbody>' +
+        assetReliabilityRanking.map((item, index) =>
+          '<tr><td><span class="reliability-rank">' + (index + 1) + '</span></td><td><b>' + esc(item.asset) + '</b></td>' +
+          '<td>' + esc(item.equipment || 'Não informado') + '</td>' +
+          '<td>' + esc(item.plant) + '<br><span class="small-note">' + esc(item.tag) + '</span></td>' +
+          '<td>' + num(item.events) + '</td><td>' + duration(item.mtbfHours) + '</td><td>' + num(item.intervals) + '</td>' +
+          '<td>' + duration(item.mttrHours) + '</td><td>' + num(item.closed) + '</td><td>' + availabilityCell(item.availability) + '</td></tr>'
+        ).join('') + '</tbody></table><div class="asset-reliability-ranking-cards">' +
+        assetReliabilityRanking.map((item, index) =>
+          '<article class="reliability-rank-card"><div class="reliability-rank-heading"><span class="reliability-rank">' + (index + 1) + '</span>' +
+          '<div class="reliability-rank-plant"><b>' + esc(item.asset) + '</b><small>' + esc(item.plant) + ' · ' + esc(item.tag) + '</small></div>' +
+          '<strong class="reliability-rank-value">' + pct(item.availability) + '</strong></div>' +
+          '<div class="reliability-rank-bar">' + availabilityCell(item.availability) + '</div>' +
+          '<div class="reliability-rank-metrics"><span>MTBF <b>' + duration(item.mtbfHours) + '</b></span><span>MTTR <b>' + duration(item.mttrHours) + '</b></span></div>' +
+          '</article>'
+        ).join('') + '</div></div>'
+      : emptyHTML;
+
+    const maxReason = reasonList[0]?.[1].total || 1;
+    $('#stopReasons').innerHTML = reasonList.length
+      ? '<div class="type-list">' + reasonList.map(([reason, item]) =>
+          '<div class="type-row">' +
+          '<div class="row-head"><b>' + esc(reason) + '</b><span>' + num(item.total) + ' OS</span></div>' +
+          '<div class="row-sub"><span>' + num(item.confirmed) + ' confirmadas · ' + num(item.total - item.confirmed) + ' identificadas</span></div>' +
+          '<span class="mini-track"><i style="width:' + (item.total / maxReason * 100) + '%;background:var(--red)"></i></span>' +
+          '</div>'
+        ).join('') + '</div>'
+      : emptyHTML;
+
+    $('#stopYears').innerHTML = yearList.length
+      ? '<table><thead><tr><th>Ano</th><th>Paradas</th><th>Confirmadas</th></tr></thead><tbody>' +
+        yearList.map(([year, item]) => '<tr><td><b>' + esc(year) + '</b></td><td>' + num(item.total) + '</td><td>' + num(item.confirmed) + '</td></tr>').join('') +
+        '</tbody></table>'
+      : emptyHTML;
+
+    $('#stopAssets').innerHTML = assetList.length
+      ? '<div class="type-list">' + assetList.map(([asset, item]) =>
+          '<div class="type-row"><div class="row-head"><b>' + esc(asset) + '</b><span>' + num(item.total) + ' OS</span></div><div class="row-sub"><span>' + num(item.confirmed) + ' confirmadas</span></div><span class="mini-track"><i style="width:' + (item.total / (assetList[0][1].total || 1) * 100) + '%;background:var(--amber)"></i></span></div>'
+        ).join('') + '</div>'
+      : emptyHTML;
+
+    $('#stopGroups').innerHTML = groupList.length
+      ? '<table><thead><tr><th>Ano</th><th>Planta</th><th>Ativo</th><th>Motivo</th><th>Paradas</th><th>Confirmadas</th><th>Duração média</th></tr></thead><tbody>' +
+        groupList.map(g => {
+          const key = rankEvidence.push({ name: g.year + ' · ' + g.plant + ' · ' + g.asset + ' · ' + g.reason, count: g.total, ids: g.ids }) - 1;
+          return '<tr>' +
+            '<td><b>' + esc(g.year) + '</b></td>' +
+            '<td>' + esc(g.plant) + '</td>' +
+            '<td>' + esc(g.asset) + '</td>' +
+            '<td>' + esc(g.reason) + '</td>' +
+            '<td><button class="link" data-rank="' + key + '">' + num(g.total) + ' OS ↗</button></td>' +
+            '<td>' + num(g.confirmed) + '</td>' +
+            '<td>' + (g.avgDuration == null ? '—' : g.avgDuration.toFixed(1) + ' dias') + '</td>' +
+            '</tr>';
+        }).join('') + '</tbody></table>'
+      : emptyHTML;
+  }
+
+  function renderDeadlines() {
+    const cohort = P.filter(data, f, true), a = P.adherence(data, f), asOf = today(), t = P.timing(cohort, asOf);
+    $('#deadlineCards').innerHTML =
+      kpi('Aderência ao plano', pct(a.rate), num(a.done) + ' de ' + num(a.total) + ' ordens') +
+      kpi('Executadas no prazo', num(t.onTime), 'Conclusão até o prazo programado', '#20815b') +
+      kpi('Executadas fora do prazo', num(t.late), 'Conclusão após o prazo programado', '#c14442') +
+      kpi('Prazo não avaliável', num(t.unassessed), 'Datas ou situação insuficientes', '#b87918');
+
+    const systemStats = data.systems
+      .filter(s => matchesFilter(s.tag, f.tag))
+      .map(s => {
+        const sysFilter = { ...f, tag: s.tag };
+        const adh = P.adherence(data, sysFilter);
+        const tim = P.timing(P.filter(data, sysFilter, true), asOf);
+        return { s, adh, tim, health: P.systemHealth(adh.rate, tim.overdue) };
+      })
+      .sort((x, y) =>
+        (x.adh.rate == null ? 1 : 0) - (y.adh.rate == null ? 1 : 0) ||
+        (x.adh.rate ?? 0) - (y.adh.rate ?? 0) ||
+        x.s.name.localeCompare(y.s.name, 'pt-BR')
+      );
+
+    $('#planTable').innerHTML = '<table class="preventive-ranking-table"><thead><tr><th>Rank</th><th>Instalação</th><th>Ordens do plano</th><th>Executadas</th><th>Aderência</th><th>Início no período</th><th>Abertas vencidas</th></tr></thead><tbody>' +
+      systemStats.map(({ s, adh, tim, health }, index) =>
+        '<tr><td><span class="reliability-rank">' + (index + 1) + '</span></td>' +
+        '<td><button class="link" data-system="' + esc(s.tag) + '">' + esc(s.name) + '</button></td>' +
+        '<td>' + num(adh.total) + '</td>' +
+        '<td>' + num(adh.done) + '</td>' +
+        '<td><div class="adherence-cell"><strong>' + pct(adh.rate) + '</strong><span class="adherence-bar"><i class="' + health + '" style="width:' + (adh.rate == null ? 0 : adh.rate * 100) + '%"></i></span></div></td>' +
+        '<td>' + num(adh.within) + '</td>' +
+        '<td>' + (tim.overdue > 0 ? '<span class="badge critical">' + num(tim.overdue) + ' vencida(s)</span>' : '<span class="badge good">0</span>') + '</td>' +
+        '</tr>'
+      ).join('') + '</tbody></table><div class="preventive-ranking-cards">' +
+      systemStats.map(({ s, adh, tim, health }, index) =>
+        '<article class="reliability-rank-card"><div class="reliability-rank-heading"><span class="reliability-rank">' + (index + 1) + '</span>' +
+        '<div class="reliability-rank-plant"><button class="link" data-system="' + esc(s.tag) + '">' + esc(s.name) + '</button><small>' + num(adh.done) + ' de ' + num(adh.total) + ' ordens do plano</small></div>' +
+        '<strong class="reliability-rank-value">' + pct(adh.rate) + '</strong></div>' +
+        '<div class="reliability-rank-bar"><div class="adherence-bar"><i class="' + health + '" style="width:' + (adh.rate == null ? 0 : adh.rate * 100) + '%"></i></div></div>' +
+        '<div class="reliability-rank-metrics"><span>Início no período <b>' + num(adh.within) + '</b></span>' +
+        '<span>Vencidas <b>' + num(tim.overdue) + '</b></span></div></article>'
+      ).join('') + '</div>';
+
+    $('#comparison').innerHTML = [
+      ['Início anterior à referência', t.before],
+      ['Início na referência', t.same],
+      ['Início após a referência', t.after],
+      ['Sem datas para comparação', t.withoutComparison],
+      ['Ordens abertas com prazo vencido', t.overdue],
+      ['Ordens abertas dentro do prazo', t.upcoming],
+      ['Ordens não executadas', t.notdone]
+    ].map(([n, v]) => '<div class="comparison-row"><span>' + n + '</span><b>' + num(v) + '</b></div>').join('');
+  }
+
+  function orderRows() {
+    const q = $('#search').value.toLocaleLowerCase('pt-BR');
+    const s = $('#statusFilter').value;
+    const pf = $('#planFilter')?.value || '';
+    return rows.filter(o =>
+      (!s || P.status(o) === s) &&
+      (!pf || (pf === 'planned' ? Boolean(P.text(o.plan)) : !P.text(o.plan))) &&
+      (!q || [o.id, o.text, o.asset, o.equipment, o.tag, o.type].join(' ').toLocaleLowerCase('pt-BR').includes(q))
+    ).sort((a, b) => (b.created || '').localeCompare(a.created || '') || b.id.localeCompare(a.id));
+  }
+
+  function table(list) {
+    if (!list.length) return emptyHTML;
+    return '<table><thead><tr><th>Ordem</th><th>Descrição</th><th>Classe</th><th>Instalação / ativo</th><th>Referência</th><th>Início real</th><th>Situação</th></tr></thead><tbody>' +
+      list.map(o =>
+        '<tr>' +
+        '<td><button class="link" data-order="' + esc(o.id) + '">' + esc(o.id) + '</button></td>' +
+        '<td class="description">' + esc(o.text) + '</td>' +
+        '<td>' + esc(P.typeLabel(o.type)) + '</td>' +
+        '<td>' + esc(o.asset || o.tag) + '</td>' +
+        '<td>' + fmt(o.date) + '</td>' +
+        '<td>' + fmt(o.start) + '</td>' +
+        '<td><span class="badge ' + P.status(o) + '">' + P.labels[P.status(o)] + '</span></td>' +
+        '</tr>'
+      ).join('') + '</tbody></table>';
+  }
+
+  function renderOrders() {
+    const all = orderRows(), pages = Math.max(1, Math.ceil(all.length / 30));
+    pageNo = Math.max(1, Math.min(pageNo, pages));
+    $('#ordersTable').innerHTML = table(all.slice((pageNo - 1) * 30, pageNo * 30));
+    $('#pageInfo').textContent = 'Página ' + pageNo + ' de ' + pages + ' · ' + num(all.length) + ' ordens';
+    $('#prevPage').disabled = pageNo === 1;
+    $('#nextPage').disabled = pageNo === pages;
+  }
+
+  function openDetail(html, eyebrow) {
+    $('#modalEyebrow').textContent = eyebrow;
+    $('#detailBody').innerHTML = html;
+    if (!$('#detail').open) $('#detail').showModal();
+  }
+
+  function showSystem(tag) {
+    const s = data.systems.find(s => s.tag === tag);
+    if (!s) return;
+    modalMode = 'system';
+    const filter = { ...f, tag }, source = P.filter(data, filter), n = P.stats(source), a = P.adherence(data, filter);
+    const blocks = [
+      ['component', 'Itens que mais falharam'],
+      ['cause', 'Causas registradas'],
+      ['action', 'Medidas realizadas']
+    ].map(([k, title]) => '<div class="detail-block"><h3>' + title + '</h3>' + rankHTML(ranks(k, source)) + '</div>').join('');
+    const photo = /^https:\/\//i.test(s.photo) ? '<p><a href="' + esc(s.photo) + '" target="_blank" rel="noopener noreferrer">Abrir imagem cadastrada ↗</a></p>' : '';
+    openDetail(
+      '<div class="detail-heading"><h2>' + esc(s.name) + '</h2><p>' + esc(s.tag) + ' · ' + esc(s.address || s.district || 'Endereço não informado') + '</p></div>' +
+      '<div class="detail-kpis"><div><small>Ordens executadas</small><b>' + num(n.done) + '</b></div><div><small>Aderência ao plano</small><b>' + pct(a.rate) + '</b></div><div><small>Ordens no período</small><b>' + num(n.total) + '</b></div></div>' +
+      '<dl class="order-info">' +
+      field('Situação operacional', s.status) +
+      field('Criticidade', s.critical) +
+      field('Tipo de manutenção', P.typeLabel(s.type)) +
+      field('Latitude', s.lat) +
+      field('Longitude', s.lng) +
+      field('Bairro', s.district) +
+      '</dl>' + photo +
+      '<h3 class="detail-section">Itens, Causas e Medidas</h3><div class="detail-grid">' + blocks + '</div>' +
+      '<h3 class="detail-section">Ordens mais recentes no período</h3><div class="table-wrap">' + table([...source].sort((a, b) => (b.created || '').localeCompare(a.created || '')).slice(0, 50)) + '</div>',
+      'INSTALAÇÃO · PCM 360º'
+    );
+  }
+
+  function showOrder(id) {
+    const o = data.orders.find(o => o.id === id);
+    if (!o) return;
+    modalMode = 'order';
+    const items = data.items.filter(i => i.order === id), actions = data.actions.filter(i => i.order === id), s = data.systems.find(s => s.tag === o.tag);
+    openDetail(
+      '<div class="detail-heading"><h2>Ordem ' + esc(o.id) + '</h2><p>' + esc(o.text) + '</p></div>' +
+      '<span class="badge ' + P.status(o) + '">' + P.labels[P.status(o)] + '</span>' +
+      '<dl class="order-info">' +
+      field('Instalação', s?.name || o.tag) +
+      field('Ativo', o.asset) +
+      field('Equipamento', o.equipment) +
+      field('Data de entrada', fmt(o.created)) +
+      field('Data de referência', fmt(o.date)) +
+      field('Início real', fmt(o.start)) +
+      field('Prazo programado', fmt(o.due)) +
+      field('Conclusão real', fmt(o.finished)) +
+      field('Plano de manutenção', o.plan) +
+      field('Tipo de manutenção', P.typeLabel(o.type)) +
+      field('Prioridade', o.priority) +
+      field('Nota', o.note) +
+      '</dl>' +
+      '<h3 class="detail-section">Itens e causas registrados</h3>' +
+      (items.length
+        ? '<div class="detail-grid">' + items.map(i => '<div class="detail-block"><h3>' + esc(i.component || 'Item não informado') + '</h3><p><b>Problema:</b> ' + esc(i.problem || 'Não informado') + '</p><p><b>Causa registrada:</b> ' + esc(i.cause || 'Não informada') + '</p></div>').join('') + '</div>'
+        : emptyHTML) +
+      '<h3 class="detail-section">Medidas realizadas</h3>' +
+      (actions.length
+        ? actions.map(i => '<div class="detail-block" style="margin:8px 0">' + esc(i.action || 'Não informada') + '</div>').join('')
+        : emptyHTML),
+      'EVIDÊNCIAS DA MANUTENÇÃO'
+    );
+  }
+
+  function showEvidence(index) {
+    const r = rankEvidence[index];
+    if (!r) return;
+    const ids = new Set(r.ids), list = data.orders.filter(o => ids.has(o.id));
+    const stopNotes = r.name.endsWith('Ordens com flag de parada')
+      ? (data.stoppageNotes || []).filter(note => ids.has(note.order))
+      : [];
+    modalMode = 'evidence';
+    openDetail(
+      '<div class="detail-heading"><h2>' + esc(r.name) + '</h2><p>' + num(r.count) + ' ordens distintas nos filtros selecionados.</p></div>' +
+      (stopNotes.length
+        ? '<div class="table-wrap"><table><thead><tr><th>Ordem</th><th>Data da nota</th><th>Nota</th><th>Descrição</th></tr></thead><tbody>' +
+          stopNotes.map(note => '<tr><td>' + esc(note.order) + '</td><td>' + esc(fmt(note.date)) + '</td><td>' + esc(note.note) + '</td><td>' + esc(note.description) + '</td></tr>').join('') +
+          '</tbody></table></div>'
+        : '<div class="table-wrap">' + table(list) + '</div>'),
+      'ICM & ENGENHARIA · ORDENS RELACIONADAS'
+    );
+  }
+
+  function renderMap() {
+    if (!window.L) {
+      $('#map').innerHTML = '<div class="no-data">Não foi possível carregar o mapa. Consulte as instalações na lista ao lado.</div>';
+      return;
+    }
+    if (!map) {
+      map = L.map('map', { scrollWheelZoom: false }).setView([-5.09, -42.8], 12);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      }).on('tileerror', () => $('#mapWarning').hidden = false).addTo(map);
+      markers = L.layerGroup().addTo(map);
+    }
+    markers.clearLayers();
+    const systems = data.systems.filter(s => matchesFilter(s.tag, f.tag)), coords = [], asOf = today();
+    systems.forEach((s, i) => {
+      if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return;
+      coords.push([s.lat, s.lng]);
+      const sysFilter = { ...f, tag: s.tag };
+      const source = P.filter(data, sysFilter), n = P.stats(source), a = P.adherence(data, sysFilter), tim = P.timing(P.filter(data, sysFilter, true), asOf);
+      const health = P.systemHealth(a.rate, tim.overdue);
+      const top = ranks('component', source)[0], cause = ranks('cause', source)[0], act = ranks('action', source)[0];
+      const marker = L.marker([s.lat, s.lng], {
+        icon: L.divIcon({ className: '', html: '<div class="map-pin ' + health + '"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }),
+        title: s.name
+      }).addTo(markers);
+      marker.bindTooltip(esc(s.name), { permanent: true, direction: i % 2 ? 'right' : 'left', offset: [i % 2 ? 11 : -11, (i % 3 - 1) * 12], className: 'point-label' });
+      const html =
+        '<div class="hover-title"><b>' + esc(s.name) + '</b></div>' +
+        '<small>' + esc(s.status || 'Situação não informada') + (s.critical ? ' · Criticidade: ' + esc(s.critical) : '') + '</small>' +
+        '<div class="hover-grid"><div><small>Ordens executadas</small><b>' + num(n.done) + '</b></div><div><small>Aderência ao plano</small><b>' + pct(a.rate) + '</b></div></div>' +
+        '<div class="hover-footer"><b>Item:</b> ' + esc(top?.name || 'Sem registro') + '<br><b>Causa:</b> ' + esc(cause?.name || 'Sem registro') + '<br><b>Medida:</b> ' + esc(act?.name || 'Sem registro') + '</div>' +
+        '<div class="hover-footer">Clique no ponto para abrir a instalação.</div>';
+      marker.bindPopup(html, { closeButton: false, autoPan: false });
+      marker.on('mouseover', () => marker.openPopup());
+      marker.on('mouseout', () => marker.closePopup());
+      marker.on('click', () => showSystem(s.tag));
+    });
+    fitBounds = coords.length ? L.latLngBounds(coords) : null;
+    setTimeout(() => {
+      map.invalidateSize();
+      if (fitBounds) map.fitBounds(fitBounds, { padding: [70, 60], maxZoom: 14 });
+    }, 50);
+  }
+
+  async function loadData() {
+    if (loading) return;
+    loading = true;
+    $('#refreshBtn').disabled = true;
+    try {
+      data = window.PCM_DEMO_DATA;
+      if (!data || !Array.isArray(data.orders) || !Array.isArray(data.systems)) {
+        throw Error('Os dados fictícios da demonstração não foram carregados.');
+      }
+      options();
+      render();
+      $('#loadStatus').textContent = 'Demonstração atualizada · dados fictícios';
+      $('#footerDate').textContent = 'PCM 360º · ' + num(data.orders.length) + ' ordens fictícias';
+    } finally {
+      loading = false;
+      $('#refreshBtn').disabled = false;
+    }
+  }
+
+  function downloadCsvFile(filename, lines) {
+    const url = URL.createObjectURL(new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  const safeCsvCell = v => {
+    let s = String(v ?? '');
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return '"' + s.replaceAll('"', '""') + '"';
+  };
+
+  function exportCSV() {
+    const list = orderRows();
+    const fields = [['Ordem', 'id'], ['Descrição', 'text'], ['Tipo de manutenção', 'typeLabel'], ['Prioridade', 'priority'], ['Instalação', 'tag'], ['Ativo', 'asset'], ['Entrada', 'created'], ['Referência', 'date'], ['Início real', 'start'], ['Plano', 'plan'], ['Prazo programado', 'due'], ['Conclusão real', 'finished']];
+    const lines = [
+      fields.map(v => v[0]).concat('Situação').map(safeCsvCell).join(';'),
+      ...list.map(o => fields.map(v => v[1] === 'typeLabel' ? P.typeLabel(o.type) : o[v[1]]).concat(P.labels[P.status(o)]).map(safeCsvCell).join(';'))
+    ];
+    downloadCsvFile('Ordens_PCM_360_Demo_' + today() + '.csv', lines);
+  }
+
+  function exportIcmCSV() {
+    if (!data) return;
+    const matrix = P.icmMatrix(data, rows);
+    const lines = [
+      ['Item (Componente)', 'Problema', 'Causa Registrada', 'Medida Realizada', 'Ordens Executadas Distintas'].map(safeCsvCell).join(';'),
+      ...matrix.map(m => [m.component, m.problem, m.cause, m.action, m.count].map(safeCsvCell).join(';'))
+    ];
+    downloadCsvFile('ICM_Matriz_PCM_360_Demo_' + today() + '.csv', lines);
+  }
+
+  function printOverviewReport() {
+    if (!data) return;
+    const scopeRows = rows;
+    const stats = P.stats(scopeRows);
+    const adherence = P.adherence(data, f);
+    const asOf = today();
+    const systems = data.systems.filter(s => matchesFilter(s.tag, f.tag)).map(system => {
+      const source = scopeRows.filter(order => order.tag === system.tag);
+      const plan = P.adherence(data, { ...f, tag: system.tag });
+      const timing = P.timing(P.filter(data, { ...f, tag: system.tag }, true), asOf);
+      return { system, stats: P.stats(source), plan, timing };
+    }).sort((a, b) => b.stats.total - a.stats.total || a.system.name.localeCompare(b.system.name, 'pt-BR'));
+    const monthly = new Map();
+    for (const order of scopeRows) {
+      const month = (order.created || '').slice(0, 7);
+      if (!month) continue;
+      if (!monthly.has(month)) monthly.set(month, { total: 0, done: 0 });
+      const item = monthly.get(month);
+      item.total++;
+      if (P.status(order) === 'done') item.done++;
+    }
+    const typeList = P.byType(scopeRows);
+    const assetList = P.topAssets(scopeRows).slice(0, 10);
+    const generated = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date());
+    const period = fmt(f.from) + ' a ' + fmt(f.to);
+    const systemRows = systems.map(({ system, stats: item, plan, timing }) =>
+      '<tr><td><b>' + esc(system.name) + '</b><br><span class="muted">' + esc(system.tag) + '</span></td><td>' + num(item.total) + '</td><td>' + num(item.done) + '</td><td>' + num(item.open) + '</td><td>' + pct(plan.rate) + '</td><td>' + (timing.overdue ? num(timing.overdue) : '0') + '</td></tr>'
+    ).join('');
+    const monthRows = [...monthly].sort((a, b) => a[0].localeCompare(b[0])).map(([month, item]) =>
+      '<tr><td>' + esc(month.slice(5) + '/' + month.slice(0, 4)) + '</td><td>' + num(item.total) + '</td><td>' + num(item.done) + '</td><td>' + pct(item.total ? item.done / item.total : null) + '</td></tr>'
+    ).join('');
+    const typeRows = typeList.map(item =>
+      '<tr><td>' + esc(item.label) + '</td><td>' + num(item.total) + '</td><td>' + num(item.done) + '</td><td>' + pct(item.rate) + '</td></tr>'
+    ).join('');
+    const assetRows = assetList.map(item =>
+      '<tr><td>' + esc(item.asset) + '</td><td>' + esc(item.equipment) + '</td><td>' + esc(item.tag) + '</td><td>' + num(item.total) + '</td><td>' + num(item.corrective) + '</td></tr>'
+    ).join('');
+    const report = '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Visão dos Sistemas · PCM 360º</title><style>' +
+      '@page{size:A4 landscape;margin:12mm}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#10234f;font-size:9px;line-height:1.35;margin:0}header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #d96827;padding-bottom:9px;margin-bottom:12px}h1{font-size:21px;margin:0 0 3px;color:#d96827}h2{font-size:13px;margin:14px 0 6px;color:#d96827}.eyebrow{font-size:8px;letter-spacing:1.1px;text-transform:uppercase;color:#087f99;font-weight:700}.muted{color:#657594;font-size:8px}.logo{max-height:25px;max-width:155px}.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin:10px 0 13px}.kpi{border:1px solid #d7e1f2;border-radius:6px;padding:7px;background:#f7f9fd}.kpi span{display:block;color:#536585;font-size:8px;text-transform:uppercase}.kpi strong{display:block;font-size:17px;color:#d96827;margin-top:3px}.columns{display:grid;grid-template-columns:1.25fr 1fr;gap:12px}.box{border:1px solid #d7e1f2;border-radius:6px;padding:9px}.box h2{margin-top:0}table{width:100%;border-collapse:collapse;margin-top:5px;font-size:8px}th{background:#eef3ff;color:#536585;text-align:left;text-transform:uppercase;font-size:7px;padding:5px}td{border-bottom:1px solid #e5eaf2;padding:5px;vertical-align:top}footer{border-top:1px solid #d7e1f2;margin-top:14px;padding-top:7px;color:#536585;font-size:8px}@media print{thead{display:table-header-group}tr{break-inside:avoid}.box{break-inside:avoid}}' +
+      '</style></head><body><header><div><div class="eyebrow">PCM 360º · VISÃO EXECUTIVA</div><h1>Visão dos sistemas</h1><div class="muted">Demonstração fictícia · Entrada: ' + esc(period) + '</div><div class="muted">Gerado em ' + esc(generated) + '</div></div><strong>PCM 360º</strong></header>' +
+      '<div class="kpis"><div class="kpi"><span>Ordens no período</span><strong>' + num(stats.total) + '</strong></div><div class="kpi"><span>Executadas</span><strong>' + num(stats.done) + '</strong></div><div class="kpi"><span>Em aberto</span><strong>' + num(stats.open) + '</strong></div><div class="kpi"><span>Não executadas</span><strong>' + num(stats.notdone) + '</strong></div><div class="kpi"><span>Aderência ao plano</span><strong>' + pct(adherence.rate) + '</strong></div></div>' +
+      '<section class="box"><h2>Desempenho por instalação</h2><table><thead><tr><th>Instalação</th><th>Ordens</th><th>Executadas</th><th>Em aberto</th><th>Aderência</th><th>Vencidas</th></tr></thead><tbody>' + (systemRows || '<tr><td colspan="6">Sem instalações no recorte.</td></tr>') + '</tbody></table></section>' +
+      '<div class="columns"><section class="box"><h2>Evolução mensal</h2><table><thead><tr><th>Mês</th><th>Ordens</th><th>Executadas</th><th>Execução</th></tr></thead><tbody>' + (monthRows || '<tr><td colspan="4">Sem registros.</td></tr>') + '</tbody></table></section><section class="box"><h2>Distribuição por tipo de manutenção</h2><table><thead><tr><th>Tipo</th><th>Ordens</th><th>Executadas</th><th>Execução</th></tr></thead><tbody>' + (typeRows || '<tr><td colspan="4">Sem registros.</td></tr>') + '</tbody></table></section></div>' +
+      '<h2>Ativos com maior volume de intervenções</h2><table><thead><tr><th>Ativo</th><th>Equipamento</th><th>Instalação</th><th>Total</th><th>Corretivas</th></tr></thead><tbody>' + (assetRows || '<tr><td colspan="5">Sem registros.</td></tr>') + '</tbody></table>' +
+      '<footer>Relatório gerado a partir dos filtros ativos do painel. A aderência considera ordens do plano no período; a execução mensal usa a data de entrada.</footer></body></html>';
+    const popup = window.open('', '_blank');
+    if (!popup) {
+      notify('O navegador bloqueou a janela do relatório. Permita pop-ups para gerar o PDF.');
+      return;
+    }
+    popup.document.write(report);
+    popup.document.close();
+    popup.focus();
+    setTimeout(() => {
+      popup.print();
+      popup.onafterprint = () => popup.close();
+    }, 300);
+  }
+
+  function printStopsReport() {
+    if (!data) return;
+    const records = P.stopRecords(data, rows);
+    const reasons = new Map(), assets = new Map(), groups = new Map();
+    for (const record of records) {
+      reasons.set(record.reason, (reasons.get(record.reason) || 0) + 1);
+      assets.set(record.asset, (assets.get(record.asset) || 0) + 1);
+      const key = [record.year, record.tag, record.asset, record.reason].join('\\u0000');
+      if (!groups.has(key)) groups.set(key, { year: record.year, plant: record.plant, asset: record.asset, reason: record.reason, total: 0, confirmed: 0 });
+      const group = groups.get(key);
+      group.total++;
+      if (record.status === 'Confirmada') group.confirmed++;
+    }
+    const reasonList = [...reasons].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'pt-BR'));
+    const assetList = [...assets].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'pt-BR')).slice(0, 10);
+    const groupList = [...groups.values()].sort((a, b) => b.total - a.total || a.plant.localeCompare(b.plant, 'pt-BR'));
+    const confirmed = records.filter(record => record.status === 'Confirmada').length;
+    const generated = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date());
+    const period = fmt(f.from) + ' a ' + fmt(f.to);
+    const rowsHtml = groupList.map(group => '<tr><td>' + esc(group.year) + '</td><td>' + esc(group.plant) + '</td><td>' + esc(group.asset) + '</td><td>' + esc(group.reason) + '</td><td>' + num(group.total) + '</td><td>' + num(group.confirmed) + '</td></tr>').join('');
+    const reasonHtml = reasonList.map(([reason, count]) => '<li><span>' + esc(reason) + '</span><b>' + num(count) + '</b></li>').join('');
+    const assetHtml = assetList.map(([asset, count]) => '<li><span>' + esc(asset) + '</span><b>' + num(count) + '</b></li>').join('');
+    const report = '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Relatório de Paradas · PCM 360º</title><style>' +
+      '@page{size:A4;margin:14mm}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#10234f;font-size:10px;line-height:1.35;margin:0}header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #d96827;padding-bottom:10px;margin-bottom:14px}h1{font-size:22px;margin:0 0 3px;color:#d96827}h2{font-size:14px;margin:18px 0 8px;color:#d96827}.eyebrow{font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:#087f99;font-weight:700}.meta{color:#536585;font-size:9px}.logo{max-height:26px;max-width:160px}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin:12px 0 16px}.kpi{border:1px solid #d7e1f2;border-radius:6px;padding:8px;background:#f7f9fd}.kpi span{display:block;color:#536585;font-size:8px;text-transform:uppercase}.kpi strong{display:block;font-size:18px;color:#d96827;margin-top:3px}.columns{display:grid;grid-template-columns:1fr 1fr;gap:14px}.box{border:1px solid #d7e1f2;border-radius:6px;padding:10px}.box h2{margin-top:0}.list{padding:0;margin:0;list-style:none}.list li{display:flex;justify-content:space-between;border-bottom:1px solid #edf1f7;padding:5px 0}.list li:last-child{border-bottom:0}table{width:100%;border-collapse:collapse;margin-top:6px;font-size:9px}th{background:#eef3ff;color:#536585;text-align:left;text-transform:uppercase;font-size:8px;padding:6px}td{border-bottom:1px solid #e5eaf2;padding:6px;vertical-align:top}footer{border-top:1px solid #d7e1f2;margin-top:18px;padding-top:8px;color:#536585;font-size:8px}@media print{thead{display:table-header-group}tr{break-inside:avoid}.box{break-inside:avoid}}' +
+      '</style></head><body><header><div><div class="eyebrow">PCM 360º · CONFIABILIDADE OPERACIONAL</div><h1>Relatório de Paradas</h1><div class="meta">Demonstração fictícia · Período de entrada: ' + esc(period) + '</div><div class="meta">Gerado em ' + esc(generated) + '</div></div><strong>PCM 360º</strong></header>' +
+      '<div class="kpis"><div class="kpi"><span>Paradas identificadas</span><strong>' + num(records.length) + '</strong></div><div class="kpi"><span>Paradas confirmadas</span><strong>' + num(confirmed) + '</strong></div><div class="kpi"><span>Plantas atingidas</span><strong>' + num(new Set(records.map(record => record.tag)).size) + '</strong></div><div class="kpi"><span>Ativos envolvidos</span><strong>' + num(new Set(records.map(record => record.asset)).size) + '</strong></div></div>' +
+      '<div class="columns"><section class="box"><h2>Pareto de motivos</h2><ul class="list">' + (reasonHtml || '<li>Sem registros</li>') + '</ul></section><section class="box"><h2>Pareto de ativos</h2><ul class="list">' + (assetHtml || '<li>Sem registros</li>') + '</ul></section></div>' +
+      '<h2>Detalhamento por ano, planta, ativo e motivo</h2><table><thead><tr><th>Ano</th><th>Planta</th><th>Ativo</th><th>Motivo</th><th>Paradas</th><th>Confirmadas</th></tr></thead><tbody>' + (rowsHtml || '<tr><td colspan="6">Sem registros para os filtros selecionados.</td></tr>') + '</tbody></table>' +
+      '<footer>Critério: ocorrência identificada por texto, problema ou causa. Confirmação e duração dependem dos campos opcionais da planilha. Este relatório considera ordens distintas e os filtros ativos do painel.</footer></body></html>';
+    const popup = window.open('', '_blank');
+    if (!popup) {
+      notify('O navegador bloqueou a janela do relatório. Permita pop-ups para gerar o PDF.');
+      return;
+    }
+    popup.document.write(report);
+    popup.document.close();
+    popup.focus();
+    setTimeout(() => {
+      popup.print();
+      popup.onafterprint = () => popup.close();
+    }, 300);
+  }
+
+  function exportStopsCSV() {
+    if (!data) return;
+    const records = P.stopRecords(data, rows);
+    const lines = [
+      ['Ano', 'Data de entrada', 'Planta', 'Ativo', 'Motivo', 'Status', 'Duração (dias)', 'Impacto', 'Ordem', 'Descrição'].map(safeCsvCell).join(';'),
+      ...records.map(r => [r.year, r.created, r.plant, r.asset, r.reason, r.status, r.durationDays == null ? '' : r.durationDays, r.impact, r.id, r.text].map(safeCsvCell).join(';'))
+    ];
+    downloadCsvFile('Paradas_PCM_360_Demo_' + today() + '.csv', lines);
+  }
+
+  function exportFlaggedStopsCSV() {
+    if (!data) return;
+    const grouped = P.flaggedStopOrders(data, f);
+    const lines = [
+      ['TAG Planta', 'Planta', 'Ordens distintas com Parada = X'].map(safeCsvCell).join(';'),
+      ...grouped.map(item => [item.tag, item.plant, item.count].map(safeCsvCell).join(';'))
+    ];
+    downloadCsvFile('Ordens_com_Flag_de_Parada_PCM_360_Demo_' + today() + '.csv', lines);
+  }
+
+  function exportDeadlinesCSV() {
+    if (!data) return;
+    const asOf = today();
+    const lines = [
+      ['TAG Instalação', 'Nome da Instalação', 'Ordens do Plano', 'Executadas', 'Aderência (%)', 'Início no Período', 'Abertas Vencidas'].map(safeCsvCell).join(';'),
+      ...data.systems.filter(s => matchesFilter(s.tag, f.tag)).map(s => {
+        const sysFilter = { ...f, tag: s.tag };
+        const adh = P.adherence(data, sysFilter);
+        const tim = P.timing(P.filter(data, sysFilter, true), asOf);
+        return [s.tag, s.name, adh.total, adh.done, adh.rate == null ? '' : (adh.rate * 100).toFixed(1), adh.within, tim.overdue].map(safeCsvCell).join(';');
+      })
+    ];
+    downloadCsvFile('Aderencia_Instalacoes_PCM_360_Demo_' + today() + '.csv', lines);
+  }
+
+  function exportBadActorsCSV() {
+    if (!data) return;
+    const actors = P.badActors(rows);
+    const sysNameByTag = new Map((data.systems || []).map(s => [s.tag, s.name]));
+    const lines = [
+      ['TAG Ativo', 'Equipamento', 'TAG Instalação', 'Instalação', 'Total OS', 'Ordens Executadas', 'Corretivas', 'Emergenciais', 'Retrabalho (<30 dias)', 'MTBF Estimado (dias)'].map(safeCsvCell).join(';'),
+      ...actors.map(a => [a.asset, a.equipment, a.tag, sysNameByTag.get(a.tag) || a.tag, a.total, a.done, a.corrective, a.emergency, a.rework30d, a.mtbfDays == null ? '' : Math.round(a.mtbfDays)].map(safeCsvCell).join(';'))
+    ];
+    downloadCsvFile('Bad_Actors_MTBF_PCM_360_Demo_' + today() + '.csv', lines);
+  }
+
+  function applyPeriodPreset(preset) {
+    const now = today();
+    const year = now.slice(0, 4);
+    const month = now.slice(0, 7);
+    if (preset === 'month') {
+      f.from = month + '-01';
+      f.to = now;
+    } else if (preset === '90d') {
+      const d = new Date(now + 'T00:00:00Z');
+      d.setUTCDate(d.getUTCDate() - 90);
+      f.from = d.toISOString().slice(0, 10);
+      f.to = now;
+    } else if (preset === 'year') {
+      f.from = year + '-01-01';
+      f.to = year + '-12-31';
+    } else if (preset === 'all') {
+      const dates = (data?.orders || []).map(o => o.created).filter(P.validDate).sort();
+      f.from = dates[0] || '2020-01-01';
+      f.to = dates[dates.length - 1] || year + '-12-31';
+    }
+    $('#from').value = f.from;
+    $('#to').value = f.to;
+    $$('.preset-btn').forEach(b => b.classList.toggle('active', b.dataset.preset === preset));
+    if (data) render();
+  }
+
+  function rules() {
+    openDetail(
+      '<div class="detail-heading"><h2>Critérios dos indicadores e Engenharia de Manutenção</h2><p>Regras aplicadas a todos os sistemas, filtros e diagnósticos executivos (NBR 5462 / SMRP).</p></div>' +
+      '<div class="explanation">' +
+      '<h3>Ordens executadas</h3><p>Consideramos executadas as ordens com encerramento técnico confirmado. Registros de não execução têm prioridade quando as situações coexistem; encerramento administrativo isolado não comprova a execução.</p>' +
+      '<h3>Aderência ao plano</h3><p>Ordens executadas do plano divididas pelas ordens existentes com plano preenchido e referência no período. Ordens abertas e não executadas permanecem no denominador.</p>' +
+      '<h3>Mix Proativo × Reativo (Benchmark SMRP)</h3><p>Proativa soma manutenção preventiva, preditiva e engenharia. Reativa agrupa corretivas emergenciais, corretivas programadas, controle operacional e serviços. A referência internacional SMRP é ≥ 80% de manutenção proativa.</p>' +
+      '<h3>Índice de Paliativos ("Efeito Reset")</h3><p>Proporção de ordens com medida apontada cujo encerramento foi apenas Rearme, Reset ou Ajuste de Parâmetros. Valores elevados indicam necessidade de investigação de qualidade de energia, proteção elétrica ou automação.</p>' +
+      '<h3>Bad Actors, Retrabalho (&lt; 30 dias) e MTBF</h3><p>Equipamentos são ranqueados pelo volume de intervenções corretivas. Falhas corretivas sucessivas no mesmo ativo em intervalo ≤ 30 dias são contabilizadas como retrabalho/reincidência prematura. O MTBF estimado calcula a média de dias entre intervenções corretivas consecutivas do ativo.</p>' +
+      '<h3>Itens, Causas e Medidas (ICM)</h3><p>Ordens executadas distintas por item, causa ou medida. Registros de falha inexistente e de não executar são excluídos dos rankings. As causas refletem o apontamento da ordem; a confirmação de causa raiz requer RCA.</p>' +
+      '</div>',
+      'METODOLOGIA · PCM 360º'
+    );
+  }
+
+  function exportHoursCSV() {
+    const groups = new Map();
+    for (const order of rows) {
+      const name = order.team || 'Equipe não informada';
+      const item = groups.get(name) || { orders: 0, done: 0, hours: 0, overtime: 0 };
+      item.orders++;
+      if (P.status(order) === 'done') item.done++;
+      item.hours += Number(order.hours || 0);
+      item.overtime += Number(order.overtime || 0);
+      groups.set(name, item);
+    }
+    const lines = [
+      ['Equipe', 'Ordens', 'Concluídas', 'Horas apontadas', 'Horas extras', 'OS concluídas por 100 h'].map(safeCsvCell).join(';'),
+      ...[...groups].map(([name, item]) => [
+        name, item.orders, item.done, item.hours, item.overtime,
+        item.hours ? (item.done / item.hours * 100).toFixed(1) : ''
+      ].map(safeCsvCell).join(';'))
+    ];
+    downloadCsvFile('Horas_Equipes_PCM_360_Demo_' + today() + '.csv', lines);
+  }
+
+  function bind() {
+    $('#from').value = f.from;
+    $('#to').value = f.to;
+    $$('[data-page]').forEach(b => b.onclick = () => setPage(b.dataset.page));
+    $$('[data-go]').forEach(b => b.onclick = () => setPage(b.dataset.go));
+    $$('.preset-btn').forEach(b => b.onclick = () => applyPeriodPreset(b.dataset.preset));
+
+    for (const [id, key] of [['from', 'from'], ['to', 'to']]) {
+      const el = $('#' + id);
+      if (!el) continue;
+      el.onchange = () => {
+        if ((id === 'from' || id === 'to') && (!P.validDate($('#from').value) || !P.validDate($('#to').value) || $('#from').value > $('#to').value)) {
+          $('#from').value = f.from;
+          $('#to').value = f.to;
+          notify('Informe um intervalo de datas válido.');
+          return;
+        }
+        if (id === 'from' || id === 'to') $$('.preset-btn').forEach(b => b.classList.remove('active'));
+        f[key] = el.value;
+        if (data) render();
+      };
+    }
+
+    document.addEventListener('change', event => {
+      const input = event.target.closest('.filter-check');
+      if (!input) return;
+      const key = input.dataset.filterKey;
+      const selected = selectedValues(key).filter(value => value !== input.value);
+      if (input.checked) selected.push(input.value);
+      f[key] = [...new Set(selected)];
+      if (key === 'tag') {
+        f.asset = [];
+        assets();
+      }
+      refreshFilterSummary(key);
+      if (data) render();
+    });
+
+    document.addEventListener('input', event => {
+      const search = event.target.closest('[data-filter-search]');
+      if (!search) return;
+      const query = search.value.trim().toLocaleLowerCase('pt-BR');
+      const options = $(filterLabels[search.dataset.filterSearch].options);
+      options.querySelectorAll('.filter-option').forEach(option => {
+        option.hidden = !option.dataset.filterLabel.includes(query);
+      });
+    });
+
+    document.addEventListener('click', event => {
+      const action = event.target.closest('[data-filter-action]');
+      if (!action) return;
+      const { key } = action.dataset;
+      const options = $(filterLabels[key].options);
+      f[key] = action.dataset.filterAction === 'all'
+        ? [...options.querySelectorAll('.filter-check')].map(input => input.value)
+        : [];
+      options.querySelectorAll('.filter-check').forEach(input => {
+        input.checked = f[key].includes(input.value);
+      });
+      if (key === 'tag') {
+        f.asset = [];
+        assets();
+      }
+      refreshFilterSummary(key);
+      if (data) render();
+    });
+
+    $('#activeFilterChips').addEventListener('click', event => {
+      const chip = event.target.closest('[data-remove-filter]');
+      if (!chip) return;
+      const key = chip.dataset.removeFilter;
+      if (key === 'period') {
+        f.from = today().slice(0, 4) + '-01-01';
+        f.to = today().slice(0, 4) + '-12-31';
+        $('#from').value = f.from;
+        $('#to').value = f.to;
+        $$('.preset-btn').forEach(button => button.classList.toggle('active', button.dataset.preset === 'year'));
+      } else if (filterLabels[key]) {
+        f[key] = selectedValues(key).filter(value => value !== chip.dataset.filterValue);
+        const input = [...document.querySelectorAll(filterLabels[key].options + ' input')].find(item => item.value === chip.dataset.filterValue);
+        if (input) input.checked = false;
+        if (key === 'tag') {
+          f.asset = [];
+          assets();
+        }
+        refreshFilterSummary(key);
+      }
+      if (data) render();
+    });
+
+    $('#clearFilters').onclick = () => {
+      Object.assign(f, { from: today().slice(0, 4) + '-01-01', to: today().slice(0, 4) + '-12-31', dateField: 'created', tag: [], asset: [], type: [], priority: [] });
+      $('#from').value = f.from;
+      $('#to').value = f.to;
+      $('#search').value = '';
+      $('#statusFilter').value = '';
+      if ($('#planFilter')) $('#planFilter').value = '';
+      if ($('#systemSearch')) $('#systemSearch').value = '';
+      $$('.preset-btn').forEach(b => b.classList.toggle('active', b.dataset.preset === 'year'));
+      options();
+      render();
+    };
+
+    if ($('#systemSearch')) {
+      $('#systemSearch').oninput = () => renderSystemsList();
+    }
+
+    document.addEventListener('click', event => {
+      const s = event.target.closest('[data-system]');
+      const o = event.target.closest('[data-order]');
+      const r = event.target.closest('[data-rank]');
+      const tf = event.target.closest('[data-type-filter]');
+      if (s && data) showSystem(s.dataset.system);
+      else if (o && data) showOrder(o.dataset.order);
+      else if (r && data) showEvidence(Number(r.dataset.rank));
+      else if (tf && data) {
+        const clickedType = tf.dataset.typeFilter;
+        toggleFilterValue('type', clickedType);
+        const input = [...document.querySelectorAll('#typeOptions input')].find(item => item.value === clickedType);
+        if (input) input.checked = selectedValues('type').includes(clickedType);
+        render();
+      }
+    });
+
+    $('#search').oninput = () => { pageNo = 1; if (data) renderOrders(); };
+    $('#statusFilter').onchange = () => { pageNo = 1; if (data) renderOrders(); };
+    if ($('#planFilter')) $('#planFilter').onchange = () => { pageNo = 1; if (data) renderOrders(); };
+    $('#prevPage').onclick = () => { pageNo--; renderOrders(); };
+    $('#nextPage').onclick = () => { pageNo++; renderOrders(); };
+    $('#closeDetail').onclick = () => $('#detail').close();
+    $('#rulesBtn').onclick = rules;
+    $('#fitMap').onclick = () => { if (map && fitBounds) map.fitBounds(fitBounds, { padding: [70, 60], maxZoom: 14 }); };
+
+    if ($('#fullscreenMap')) {
+      $('#fullscreenMap').onclick = () => {
+        const card = $('#mapCard');
+        const expanded = card.classList.toggle('is-fullscreen');
+        $('#fullscreenMap').textContent = expanded ? 'Reduzir ⤡' : 'Expandir ⤢';
+        if (map) setTimeout(() => { map.invalidateSize(); if (fitBounds) map.fitBounds(fitBounds, { padding: [70, 60], maxZoom: 14 }); }, 80);
+      };
+    }
+
+    $('#refreshBtn').onclick = async () => {
+      try {
+        await loadData();
+        notify('Informações atualizadas.');
+      } catch (e) {
+        notify(errorText(e));
       }
     };
-    const config = exports[key];
-    const quote = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
-    const lines = [config.headers, ...config.data.map(row => config.fields.map(field => row[field]))]
-      .map(line => line.map(quote).join(';')).join('\r\n');
-    const url = URL.createObjectURL(new Blob(['\ufeff' + lines], { type: 'text/csv;charset=utf-8' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = config.filename;
-    link.click();
-    URL.revokeObjectURL(url);
+
+    $('#exportBtn').onclick = exportCSV;
+    if ($('#exportIcmBtn')) $('#exportIcmBtn').onclick = exportIcmCSV;
+    if ($('#exportDeadlinesBtn')) $('#exportDeadlinesBtn').onclick = exportDeadlinesCSV;
+    if ($('#exportBadActorsBtn')) $('#exportBadActorsBtn').onclick = exportBadActorsCSV;
+    if ($('#exportStopsBtn')) $('#exportStopsBtn').onclick = exportStopsCSV;
+    if ($('#exportFlaggedStopsBtn')) $('#exportFlaggedStopsBtn').onclick = exportFlaggedStopsCSV;
+    if ($('#printStopsBtn')) $('#printStopsBtn').onclick = printStopsReport;
+    if ($('#printOverviewBtn')) $('#printOverviewBtn').onclick = printOverviewReport;
+
+    $('#exportHoursBtn').onclick = () => exportHoursCSV();
   }
 
-  function setup() {
-    $('#plantFilter').innerHTML += plants.map(plant => `<option value="${esc(plant.id)}">${esc(plant.name)} · ${esc(plant.city)}</option>`).join('');
-    [...new Set(orders.map(order => order.type))].sort().forEach(type => $('#typeFilter').insertAdjacentHTML('beforeend', `<option value="${esc(type)}">${esc(type)}</option>`));
-    teams.forEach(team => $('#teamFilter').insertAdjacentHTML('beforeend', `<option value="${esc(team.id)}">${esc(team.name)}</option>`));
-    $$('[data-page]').forEach(button => button.addEventListener('click', () => {
-      selected.page = button.dataset.page;
-      document.body.classList.remove('nav-open');
-      render();
-    }));
-    $$('[data-go]').forEach(button => button.addEventListener('click', () => {
-      selected.page = button.dataset.go;
-      render();
-    }));
-    $('#plantFilter').addEventListener('change', event => { selected.plant = event.target.value; render(); });
-    $('#typeFilter').addEventListener('change', event => { selected.type = event.target.value; render(); });
-    $('#teamFilter').addEventListener('change', event => { selected.team = event.target.value; render(); });
-    $('#period').addEventListener('change', event => { selected.days = Number(event.target.value); render(); });
-    $('#resetFilters').addEventListener('click', () => {
-      selected.plant = ''; selected.type = ''; selected.team = '';
-      $('#plantFilter').value = ''; $('#typeFilter').value = ''; $('#teamFilter').value = '';
-      render();
-    });
-    $('#mobileMenu').addEventListener('click', () => document.body.classList.toggle('nav-open'));
-    $$('[data-export]').forEach(button => button.addEventListener('click', () => downloadCsv(button.dataset.export)));
-    render();
+  async function boot() {
+    bind();
+    try {
+      await loadData();
+    } catch (e) {
+      $('#loadStatus').textContent = errorText(e);
+      notify(errorText(e));
+    }
   }
 
-  setup();
+  boot();
 })();

@@ -1,56 +1,78 @@
 (() => {
   'use strict';
-  const plants = [
-    { id: 'TER-01', name: 'ETA Aurora', city: 'Teresina', x: 67, y: 30, adherence: 0.91, plan: 42, done: 38 },
-    { id: 'PAR-02', name: 'Elevatória Horizonte', city: 'Parnaíba', x: 39, y: 12, adherence: 0.79, plan: 29, done: 23 },
-    { id: 'PIR-03', name: 'ETA Vale Verde', city: 'Picos', x: 53, y: 63, adherence: 0.86, plan: 35, done: 30 },
-    { id: 'FLR-04', name: 'Unidade Ipê', city: 'Floriano', x: 39, y: 53, adherence: 0.62, plan: 24, done: 15 },
-    { id: 'CAM-05', name: 'ETA Campo Claro', city: 'Campo Maior', x: 73, y: 23, adherence: 0.94, plan: 31, done: 29 },
-    { id: 'PIR-06', name: 'Elevatória Mandacaru', city: 'Piripiri', x: 69, y: 15, adherence: 0.55, plan: 22, done: 12 },
-    { id: 'BOM-07', name: 'ETA Serra Azul', city: 'Bom Jesus', x: 48, y: 82, adherence: 0.83, plan: 27, done: 22 },
-    { id: 'OEI-08', name: 'Unidade Carnaúba', city: 'Oeiras', x: 50, y: 48, adherence: 0.89, plan: 26, done: 23 },
-    { id: 'UNI-09', name: 'ETA Rio Longá', city: 'União', x: 77, y: 32, adherence: 0.72, plan: 25, done: 18 }
+  const systems = [
+    { tag: 'PI-ETA-01', name: 'ETA Sol do Norte', district: 'Parnaíba', lat: -2.91, lng: -41.78, status: 'Operacional', critical: 'Alta' },
+    { tag: 'PI-ELE-02', name: 'Elevatória Dunas', district: 'Luís Correia', lat: -2.88, lng: -41.67, status: 'Operacional', critical: 'Média' },
+    { tag: 'PI-ETA-03', name: 'ETA Riacho Claro', district: 'Piripiri', lat: -4.27, lng: -41.78, status: 'Operacional', critical: 'Alta' },
+    { tag: 'PI-ELE-04', name: 'Elevatória Ipê', district: 'Campo Maior', lat: -4.83, lng: -42.17, status: 'Operacional', critical: 'Média' },
+    { tag: 'PI-ETA-05', name: 'ETA Pedra Branca', district: 'Teresina', lat: -5.08, lng: -42.81, status: 'Operacional', critical: 'Alta' },
+    { tag: 'PI-ELE-06', name: 'Elevatória Carnaúba', district: 'Altos', lat: -5.04, lng: -42.46, status: 'Operacional', critical: 'Baixa' },
+    { tag: 'PI-ETA-07', name: 'ETA Serra Dourada', district: 'Floriano', lat: -6.77, lng: -43.02, status: 'Operacional', critical: 'Alta' },
+    { tag: 'PI-ELE-08', name: 'Elevatória Mandacaru', district: 'Oeiras', lat: -7.02, lng: -42.13, status: 'Operacional', critical: 'Média' },
+    { tag: 'PI-ETA-09', name: 'ETA Vale das Águas', district: 'Picos', lat: -7.08, lng: -41.47, status: 'Operacional', critical: 'Alta' },
+    { tag: 'PI-ELE-10', name: 'Elevatória Umbuzeiro', district: 'Bom Jesus', lat: -9.07, lng: -44.36, status: 'Operacional', critical: 'Média' },
+    { tag: 'PI-ETA-11', name: 'ETA Lagoa Serena', district: 'São Raimundo Nonato', lat: -9.02, lng: -42.70, status: 'Operacional', critical: 'Alta' },
+    { tag: 'PI-ELE-12', name: 'Elevatória Jatobá', district: 'Uruçuí', lat: -7.23, lng: -44.56, status: 'Operacional', critical: 'Média' }
   ];
-  const teams = [
-    { id: 'EQ-01', name: 'Equipe Laranja', specialty: 'Mecânica' },
-    { id: 'EQ-02', name: 'Equipe Caju', specialty: 'Elétrica' },
-    { id: 'EQ-03', name: 'Equipe Carnaúba', specialty: 'Instrumentação' },
-    { id: 'EQ-04', name: 'Equipe Mandacaru', specialty: 'Multidisciplinar' }
-  ];
-  const assets = ['Bomba centrífuga', 'Motor elétrico', 'Painel de comando', 'Válvula de retenção', 'Sensor de pressão', 'Conjunto motobomba', 'Inversor de frequência', 'Medidor de vazão'];
-  const components = ['Rolamento', 'Selo mecânico', 'Acoplamento', 'Motor', 'Painel elétrico', 'Válvula', 'Sensor', 'Filtro'];
+  const types = ['ZTPF', 'ZTPD', 'ZTPC', 'ZNTP', 'ZNTE', 'ZTEN', 'ZTCO'];
+  const assets = ['TAG-BC-101', 'TAG-MT-204', 'TAG-VR-016', 'TAG-PA-032', 'TAG-SN-008', 'TAG-CM-113', 'TAG-INV-021', 'TAG-MV-014'];
+  const equipment = ['Bomba centrífuga', 'Motor elétrico', 'Válvula de retenção', 'Painel de comando', 'Sensor de pressão', 'Conjunto motobomba', 'Inversor de frequência', 'Medidor de vazão'];
+  const components = ['Rolamento', 'Selo mecânico', 'Acoplamento', 'Motor elétrico', 'Painel elétrico', 'Válvula', 'Sensor', 'Filtro'];
   const problems = ['Vibração elevada', 'Falha de partida', 'Vazamento', 'Leitura instável', 'Aquecimento', 'Baixa vazão', 'Ruído anormal'];
   const causes = ['Desgaste natural', 'Desalinhamento', 'Conexão elétrica', 'Obstrução', 'Ajuste operacional', 'Inspeção programada'];
-  const actions = ['Substituir componente', 'Realizar alinhamento', 'Revisar conexão', 'Limpar conjunto', 'Calibrar instrumento', 'Monitorar tendência'];
-  const types = ['Preventiva', 'Corretiva', 'Preditiva', 'Emergencial'];
-  const statuses = ['Concluída', 'Concluída', 'Concluída', 'Em andamento', 'Programada'];
-  const date = (offset, day) => {
-    const d = new Date(Date.UTC(2026, 9, 1));
-    d.setUTCMonth(d.getUTCMonth() - offset);
-    d.setUTCDate(Math.min(day, 27));
-    return d.toISOString().slice(0, 10);
+  const actions = ['Substituição de componente', 'Alinhamento do conjunto', 'Revisão de conexões', 'Limpeza do equipamento', 'Calibração do instrumento', 'Monitoramento de tendência'];
+  const now = new Date();
+  const date = (monthsAgo, day) => {
+    const month = now.getUTCMonth() - monthsAgo;
+    const dayLimit = monthsAgo === 0 ? Math.min(now.getUTCDate(), 27) : 27;
+    return new Date(Date.UTC(now.getUTCFullYear(), month, Math.min(day, dayLimit))).toISOString().slice(0, 10);
   };
-  const orders = Array.from({ length: 108 }, (_, i) => {
-    const plant = plants[(i * 7 + Math.floor(i / 4)) % plants.length];
-    const team = teams[(i * 3 + Math.floor(i / 5)) % teams.length];
-    const type = types[(i * 5 + Math.floor(i / 7)) % types.length];
-    const status = statuses[(i * 3 + Math.floor(i / 9)) % statuses.length];
-    const monthOffset = (i * 7 + Math.floor(i / 8)) % 12;
-    const opened = date(monthOffset, 1 + (i * 11) % 26);
-    const closed = status === 'Concluída' ? date(Math.max(0, monthOffset - (i % 3)), 2 + (i * 9) % 24) : '';
-    const hours = 2 + ((i * 13) % 31);
-    const row = {
-      id: 'OS-' + String(260001 + i), plantId: plant.id, plant: plant.name, city: plant.city,
-      teamId: team.id, team: team.name, asset: assets[(i * 3) % assets.length],
-      type, priority: ['Baixa', 'Média', 'Alta', 'Urgente'][i % 4], status,
-      opened, closed, plan: type === 'Preventiva' || type === 'Preditiva',
-      due: date(Math.max(0, monthOffset - 1), 5 + (i * 3) % 20),
-      hours, overtime: i % 8 === 0 ? 2 : 0,
-      component: components[i % components.length], problem: problems[(i * 2) % problems.length],
-      cause: causes[(i * 3) % causes.length], action: actions[(i * 5) % actions.length],
-      stopped: i % 9 === 0, downtime: i % 9 === 0 ? 3 + (i * 7) % 26 : 0
+  const orders = Array.from({ length: 216 }, (_, index) => {
+    const system = systems[(index * 7 + Math.floor(index / 5)) % systems.length];
+    const stop = index % 8 === 0;
+    const type = stop ? (index % 16 === 0 ? 'ZNTP' : 'ZNTE') : types[(index * 5 + Math.floor(index / 9)) % types.length];
+    const status = ['ENTE', 'ENTE', 'ENTE', 'ABER', 'LIB', 'NEXE'][index % 6];
+    const monthsAgo = (index * 7 + Math.floor(index / 11)) % 12;
+    const created = date(monthsAgo, 1 + (index * 11) % 26);
+    const start = status === 'ENTE' ? date(Math.max(0, monthsAgo - index % 2), 2 + (index * 3) % 24) : '';
+    const finished = start ? date(Math.max(0, monthsAgo - index % 2), Math.min(27, Number(start.slice(-2)) + 1)) : '';
+    return {
+      id: 'OS-' + String(260001 + index), center: 'DEMO', tag: system.tag,
+      asset: assets[(index * 3 + Math.floor(index / 8)) % assets.length],
+      equipment: equipment[(index * 3 + Math.floor(index / 8)) % equipment.length],
+      type, priority: index % 17 === 0 ? 'EMERG' : index % 5 === 0 ? 'ALTA' : index % 3 === 0 ? 'MÉDIA' : 'BAIXA',
+      status, created, date: created, start, due: date(Math.max(0, monthsAgo - 1), 6 + (index * 5) % 20),
+      finished, plan: ['ZTPF', 'ZTPD', 'ZTPC'].includes(type) ? 'Plano ' + String(1 + index % 12).padStart(2, '0') : '',
+      text: ['Inspeção e ajuste do conjunto de bombeamento', 'Verificar vibração e condição de rolamentos', 'Substituição de componente com desgaste', 'Calibração e teste funcional do equipamento', 'Revisão preventiva do painel de comando', 'Avaliação de vazão e pressão operacional'][index % 6],
+      stopStart: stop ? created : '', stopEnd: stop && status === 'ENTE' ? start : '',
+      stopConfirmed: stop && status === 'ENTE',
+      stopReason: stop ? ['Falha ou avaria', 'Parada para manutenção', 'Indisponibilidade operacional'][index % 3] : '',
+      stopImpact: stop ? 'Redução temporária de disponibilidade' : '',
+      hours: 2 + (index * 13) % 31,
+      overtime: index % 8 === 0 ? 2 : 0,
+      team: ['Equipe Laranja', 'Equipe Carnaúba', 'Equipe Jatobá', 'Equipe Ipê'][index % 4]
     };
-    return row;
   });
-  window.PCM360 = { plants, teams, orders };
+  const completed = orders.filter(order => order.status === 'ENTE');
+  const items = completed.map((order, index) => ({
+    order: order.id, component: components[index % components.length],
+    problem: problems[(index * 2) % problems.length], cause: causes[(index * 3) % causes.length]
+  }));
+  const actionsList = completed.map((order, index) => ({ order: order.id, action: actions[(index * 5) % actions.length] }));
+  const stoppageNotes = orders.filter(order => order.stopStart).map((order, index) => ({
+    order: order.id,
+    tag: order.tag,
+    asset: order.asset,
+    plant: systems.find(system => system.tag === order.tag).name,
+    priority: order.priority,
+    flag: 'X',
+    date: order.stopStart,
+    startDate: order.stopStart,
+    startTime: '08:00:00',
+    endDate: order.stopEnd,
+    endTime: order.stopEnd ? '10:00:00' : '',
+    note: 'NOTA-' + String(810001 + index),
+    description: 'Evento fictício de indisponibilidade para demonstração'
+  }));
+  window.PCM_DEMO_DATA = { systems, orders, items, actions: actionsList, stoppageNotes };
 })();

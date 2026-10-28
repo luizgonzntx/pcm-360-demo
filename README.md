@@ -1,35 +1,37 @@
 # PCM 360º
 
-Protótipo de portfólio de um painel integrado de Planejamento e Controle da Manutenção (PCM), pensado para uma operação fictícia com unidades distribuídas pelo Piauí.
+Protótipo demonstrativo de Planejamento e Controle da Manutenção para uma operação fictícia distribuída pelo Piauí. A interface reproduz o fluxo de um painel PCM completo, com identidade visual própria em tons de laranja.
 
-> **Demonstração somente:** todas as plantas, equipes, ordens, horas, paradas e métricas são geradas para este protótipo. Não representam pessoas, instalações ou resultados operacionais reais.
+> **Portfólio, não operação real.** Plantas, equipes, ordens, ativos, apontamentos de horas, paradas e indicadores são inteiramente fictícios. Não use os números para decisões operacionais ou avaliação de pessoas.
 
 ## Funcionalidades
 
-- Visão executiva com indicadores, tendências mensais e diagrama territorial esquemático.
-- Filtros por período, planta, tipo de ordem e equipe.
-- Acompanhamento ilustrativo de aderência preventiva e preditiva.
-- Análises de recorrência por ativo e diagnóstico de itens, problemas, causas registradas e ações.
-- Consulta e exportação CSV de ordens, planos, diagnósticos e apontamentos agregados por equipe.
-- Histórico fictício de paradas e estimativa de disponibilidade claramente identificada como cenográfica.
-- Horas trabalhadas, horas extras e produtividade agregada por equipe, sem dados pessoais ou monitoramento individual.
-- Layout responsivo para desktop e dispositivos móveis.
+- Visão executiva com indicadores, evolução mensal, instalações e mapa.
+- Filtros de período, planta, ativo, tipo de ordem e prioridade.
+- Engenharia: mix de manutenção, ativos recorrentes, retrabalho e confiabilidade.
+- Itens, causas registradas e medidas realizadas, com evidências por ordem.
+- Aderência preventiva e preditiva, prazos e vencimentos.
+- Consulta paginada de ordens, busca e exportação CSV.
+- Paradas, MTBF, MTTR e disponibilidade estimada, com critérios explícitos.
+- Horas apontadas e horas extras fictícias, agregadas por equipe.
+- Relatórios para impressão e interface responsiva.
 
 ## Executar localmente
 
-Não há dependências de terceiros nem integração com banco de dados. Abra `index.html` no navegador ou inicie um servidor estático na raiz do projeto:
+Requer Node.js, sem instalação de pacotes:
 
 ```sh
+npm test
 python3 -m http.server 4173
 ```
 
-Depois, acesse `http://localhost:4173`.
+Abra `http://localhost:4173`. O mapa usa Leaflet e tiles do OpenStreetMap; esses recursos externos servem apenas para renderizar o fundo cartográfico.
 
-## Limites e critérios da demonstração
+## Transparência e limites
 
-- O mapa é um diagrama ilustrativo sem escala, não um mapa operacional nem uma representação geográfica precisa.
-- Os indicadores são calculados sobre registros sintéticos definidos em `data.js`.
-- A produtividade é expressa como ordens concluídas por 100 horas apontadas; não deve ser interpretada isoladamente como avaliação de desempenho.
-- Os registros de causa são categorias fictícias e não equivalem a uma análise de causa raiz.
-- Os números e as classificações não devem ser usados para decisões operacionais ou de pessoal.
-- O protótipo não contém login, persistência de dados, telemetria, localização de trabalhadores ou envio de dados a serviços externos.
+- Dados sintéticos locais em `data.js`; o protótipo não tem login, banco de dados, importação operacional nem serviço de telemetria.
+- O mapa mostra posições aproximadas das cidades para fins ilustrativos; os nomes de instalações e tags são inventados.
+- As horas são agregadas por equipe. Não há nomes, registros individuais de jornada ou monitoramento de atividade.
+- Produtividade é apresentada como ordens concluídas por 100 horas apontadas; não deve ser interpretada isoladamente como avaliação de desempenho.
+- Uma causa apontada não equivale a uma causa raiz confirmada.
+- MTBF, MTTR e disponibilidade são estimativas cenográficas e não substituem medições operacionais.
